@@ -82,11 +82,22 @@ The original Fluoddity has neither of these. Both are in `fluoddity-ca-next.html
 - **How far mass moves.** Measured per step over 300 steps, in 12 presets so far. The median is 0.2–1.6 cells, and the 99th percentile is 0.3–6 cells in 9 of them. The fast ones are Growth (10 cells), Dandelions (18 cells, median 3.1) and Curls (6 cells). So a fixed neighbourhood of about 17×17 makes this a strict CA for most presets, but not all.
 - **Speed.** Measured with a CPU renderer, so only the ratios mean anything. At 600k particles against 1024² cells, the CA is about 3× slower than the particles at spread 1 and about 6× slower at spread 2. It runs the brain in every cell, and its scatter draws 4 to 9 points per cell.
 
+## Training it to grow a gecko
+
+`train/fluoddity_ca_gecko.py` is the CA's step written in PyTorch, which makes it differentiable. It fits the brain and the physics settings so that a disc of mass grows into `train/gecko.png`: at its own 128×128 resolution, one pixel per cell, in the middle of a 256×256 grid. Three options can each be switched on with a flag:
+
+- `--see_mass`: the eyes also read mass.
+- `--centres N`: a bigger brain, with N Fourier terms instead of 10.
+- `--hidden H`: H hidden numbers carried along with the mass.
+
+The first runs are in progress.
+
 ## Files
 
 - `src/*.tmpl.html` + `src/presets.js` are the sources. `python3 src/build.py` writes the three pages.
 - `src/extract_presets.py` rebuilds `presets.js` from a clone of Fluoddity.
 - `tools/*.js` are headless Playwright drivers: screenshots, how far mass moves, timing, the spread and pressure sweeps. Open a page with `?manual` and drive it through `window.__fl`.
 - `tools/*.py` draw the deposit and kernel diagrams.
+- `train/` holds the PyTorch fit and its target.
 
 Fluoddity is MIT licensed. Its presets and algorithm are aphid91's.
