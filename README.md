@@ -4,6 +4,7 @@
 
 | page | what it is |
 |---|---|
+| [`index.html`](index.html) | a short overview of both systems, with a link to the simulator |
 | [`fluoddity.html`](fluoddity.html) | Fluoddity rebuilt from its shaders, with all 131 of its presets |
 | [`fluoddity-ca.html`](fluoddity-ca.html) | the same model as a CA, kept frozen as the first faithful version |
 | [`fluoddity-ca-next.html`](fluoddity-ca-next.html) | the CA we keep changing: spread, pressure, colour by force, the CA family, and your own presets: **Ctrl+S** saves the current settings under a name you can change, and the page keeps your working settings across reloads |

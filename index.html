@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fluoddity CA</title>
+<style>
+:root{
+  --bg:#fdfdfb; --fg:#1d1d1b; --muted:#6b6b66; --rule:#e2e1dc; --link:#1a5fb4; --code-bg:#f3f2ee;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#141413; --fg:#e6e5e0; --muted:#9a9993; --rule:#2c2c29; --link:#7fb0f0; --code-bg:#1d1d1b; }
+}
+html{ background:var(--bg); }
+body{ max-width:44rem; margin:0 auto; padding:2.5rem 1.25rem 4rem; color:var(--fg); background:var(--bg);
+  font:17px/1.6 Georgia, "Iowan Old Style", "Palatino Linotype", serif; }
+h1{ font-size:1.9rem; line-height:1.2; margin:0 0 .3rem; font-weight:normal; }
+h2{ font-size:1.3rem; margin:2.6rem 0 .6rem; font-weight:normal; border-bottom:1px solid var(--rule); padding-bottom:.25rem; }
+h3{ font-size:1.05rem; margin:1.8rem 0 .4rem; font-style:italic; font-weight:normal; }
+p, li{ margin:.6rem 0; }
+.sub{ color:var(--muted); margin:0 0 1.2rem; }
+.links{ margin:0 0 2rem; }
+.links a{ margin-right:1.2rem; }
+a{ color:var(--link); text-decoration:none; } a:hover{ text-decoration:underline; }
+code{ font:.86em/1.4 ui-monospace, Menlo, Consolas, monospace; background:var(--code-bg); padding:.05em .3em; border-radius:3px; }
+pre{ font:13px/1.5 ui-monospace, Menlo, Consolas, monospace; background:var(--code-bg); padding:.9rem 1rem; overflow-x:auto; border-radius:4px; margin:.8rem 0; }
+pre code{ background:none; padding:0; font-size:inherit; }
+details{ border:1px solid var(--rule); border-radius:4px; padding:.5rem .9rem; margin:1rem 0; }
+summary{ cursor:pointer; color:var(--muted); }
+details[open] summary{ margin-bottom:.4rem; }
+figure{ margin:1.2rem 0; }
+figure img{ max-width:100%; display:block; border-radius:3px; }
+figcaption{ color:var(--muted); font-size:.88rem; margin-top:.35rem; }
+ol.stages > li{ margin:1rem 0; }
+table{ border-collapse:collapse; font-size:.92rem; margin:.8rem 0; }
+th, td{ text-align:left; padding:.25rem .8rem .25rem 0; border-bottom:1px solid var(--rule); vertical-align:top; }
+th{ font-weight:normal; color:var(--muted); }
+.num{ font-variant-numeric:tabular-nums; }
+footer{ margin-top:3rem; color:var(--muted); font-size:.88rem; }
+</style>
+</head>
+<body>
+
+<h1>Fluoddity CA</h1>
+<p class="sub">A physarum-like particle system rebuilt as a cellular automaton: mass and velocity per cell, no particles.</p>
+<p class="links">
+  <a href="fluoddity-ca-next.html"><b>Open the simulator →</b></a>
+  <a href="fluoddity.html">the particle original</a>
+  <a href="fluoddity-ca.html">the first faithful CA</a>
+  <a href="https://github.com/ichko/fluoddity-ca">source</a>
+</p>
+
+<figure>
+  <img src="img/particles_vs_ca.png" alt="Five presets, particles above, the CA below">
+  <figcaption>The same five presets after 400 steps: Fluoddity's particles on top, the CA below.</figcaption>
+</figure>
+
+<h2>Fluoddity primer</h2>
+<p><a href="https://github.com/aphid91/Fluoddity">Fluoddity</a>, by aphid91, generalises Sage Jenson's physarum model. Particles never sense each other. They only read a trail that everyone writes, and that trail holds <b>velocity</b>, not density, so opposite flows cancel. How a particle reacts to what it reads is decided by a small Fourier "brain" with 80 parameters, shared by its cohort.</p>
+
+<details>
+<summary>The model as pseudocode</summary>
+<pre><code>Grid:      float[H, W, 2]     # trail: net flow (x, y) per pixel, faded and blurred
+
+Particle:
+    pos: vec2                 # state
+    vel: vec2                 # state; its direction is the heading
+    brain: Brain              # shared by its cohort: 4 numbers in, 4 out
+
+Globals: drag, strafe_power, sensor_angle, sensor_dist, sensor_gain, persistence, diffusion
+
+step():
+    for p in particles:
+        fwd = normalize(p.vel)
+        L = local(sample(grid, p.pos + rot(+angle)·fwd·dist), fwd)   # (along, across)
+        R = local(sample(grid, p.pos + rot(-angle)·fwd·dist), fwd)
+        out = brain(L, R) + mirror(brain(mirror(R), mirror(L)))     # no left/right bias
+        force, strafe = to_world(out[0:2]), to_world(out[2:4])
+        p.vel = p.vel * drag + force
+        p.pos = p.pos + p.vel + strafe * strafe_power               # strafe: a hop, never stored
+
+    grid = blur(grid) * persistence
+    for p in particles:
+        grid[p.pos] += p.vel * (1 - persistence)                    # a sharp 1-4 pixel splat</code></pre>
+<ul>
+  <li><b>brain(x)</b>: a sum of 10 terms, <code>Σ ampᵢ · [sin φ, cos φ, sin 2φ, cos 2φ]</code> with <code>φ = freqᵢ·x + offsetᵢ</code>.</li>
+  <li><b>mirror(v)</b>: <code>(v.along, −v.across)</code>. Running the brain again in the mirrored world and adding the result means particles turn left as readily as right.</li>
+  <li><b>Strafe</b> moves a particle sideways without changing its velocity, so it can swim upstream while its trail points the way it faces.</li>
+  <li><b>Colour</b>: hue = 0.5 × the forward part of the force.</li>
+</ul>
+<figure>
+  <img src="img/deposit.png" alt="How one particle deposits into the trail">
+  <figcaption>The deposit: a sharp bell, about 0.18 px wide, so a particle on a pixel centre gives that pixel almost all of its velocity.</figcaption>
+</figure>
+</details>
+
+<h2>Fluoddity as a CA</h2>
+<p>Each step of the conversion kept Fluoddity's constants, so the two run the same presets.</p>
+
+<ol class="stages">
+  <li><b>Grids.</b> A trail <code>float[H,W,2]</code>, as in Fluoddity. A velocity <code>float[H,W,2]</code>: the "particle" living in each cell. A mass <code>float[H,W,1]</code>, counted in particles.</li>
+  <li><b>Brain.</b> Fluoddity's, unchanged, with the mirror trick. One cohort's brain drives the whole grid.</li>
+  <li><b>Perception.</b> Two eye kernels at Fluoddity's defaults: 2.56 × <code>sensor_distance</code> cells out, at ±<code>sensor_angle</code>·π from the cell's velocity. Each is one bilinear tap, which is close to a σ ≈ 0.4 Gaussian. Projected onto the velocity and its perpendicular, they give the brain's four inputs.
+    <figure><img src="img/kernel3.png" alt="The two eye kernels"><figcaption>The two eyes at the defaults: Fluoddity's exact bilinear reading on top, the matching Gaussian below.</figcaption></figure>
+  </li>
+  <li><b>Force.</b> Not scaled by mass, as in Fluoddity. An empty cell computes a force but carries nothing, so it behaves like an empty pixel.</li>
+  <li><b>Velocity.</b> <code>vel = vel·drag + force</code>.</li>
+  <li><b>Move.</b> Each cell sends its mass, momentum and colour to <code>cell + vel + strafe·strafe_power</code>, split by overlap over the cells there. The new velocity is momentum ÷ mass. This is advection by reintegration tracking, and it conserves mass exactly.</li>
+  <li><b>Deposit.</b> <code>trail += mass · vel · (1 − persistence) · 7.07</code>, where 7.07 is Fluoddity's average splat per particle.</li>
+</ol>
+
+<h3>Two knobs Fluoddity doesn't have</h3>
+<p><b>Spread</b>: the box that carries the mass can be wider than one cell. Wider means softer and more liquid.</p>
+<figure><img src="img/ca_spread.png" alt="Spread 1, 2 and 3"><figcaption>The default preset at spread 1, 2 and 3.</figcaption></figure>
+<p><b>Pressure</b>: mass above a rest level pushes down its own gradient. At 0 it is exactly the original model.</p>
+<figure><img src="img/ca_pressure.png" alt="Pressure 0, 0.3 and 1"><figcaption>Bubbles at pressure 0, 0.3 and 1.</figcaption></figure>
+
+<h3>A family of its own</h3>
+<p>A novelty search started from Fluoddity's presets with random spread, pressure and brain choice, and mutated them slowly. It scored candidates on 13 measured features and threw out dead, static and exploding runs. 24 of its 194 candidates are the <i>CA family</i> in the simulator.</p>
+<figure><img src="img/ca_family.png" alt="24 CA presets"><figcaption>The CA family, after 300 steps at world size 0.05.</figcaption></figure>
+
+<h3>Growing a gecko</h3>
+<p>The CA's step written in PyTorch is differentiable, so it can be trained by gradient descent: a disc of mass on a 256² grid is fitted to grow the gecko at its native 128 px. The faithful 80-number brain reaches the silhouette. Letting the eyes see mass holds the shape longer, and six hidden channels give the cleanest fit.</p>
+<table>
+  <tr><th>variant</th><th>loss</th><th>what grows</th></tr>
+  <tr><td>faithful brain</td><td class="num">0.140</td><td>a gecko at steps 48–80 that blurs afterwards</td></tr>
+  <tr><td>+ sees mass</td><td class="num">0.133</td><td>a clear gecko that holds to step 160</td></tr>
+  <tr><td>+ 6 hidden channels</td><td class="num">0.098</td><td>a clean silhouette, stable to step 160</td></tr>
+  <tr><td>launch velocity frozen</td><td class="num">0.443</td><td>an 8-armed star</td></tr>
+</table>
+<figure><img src="train/fca_gecko_hidden6_grow.gif" alt="The gecko growing"><figcaption>The best fit growing from its seed (trained on steps 48–96).</figcaption></figure>
+<p>Neither part draws the gecko alone. The brain with a symmetric launch grows a star, and the learned launch without the brain smears into a blob. The rule is symmetric, so the launch velocity is the hint that gives the animal a front.</p>
+<figure><img src="train/fca_gecko_hidden6_ablate.png" alt="Ablation"><figcaption>Full model, brain off, launch reset to radial, and both.</figcaption></figure>
+
+<footer>Fluoddity and its presets are aphid91's, MIT licensed. Source and tools: <a href="https://github.com/ichko/fluoddity-ca">github.com/ichko/fluoddity-ca</a>.</footer>
+</body>
+</html>
