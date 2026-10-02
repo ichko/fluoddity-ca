@@ -41,6 +41,8 @@ button:hover,select:hover{border-color:var(--accent)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .btns{display:flex;flex-wrap:wrap;gap:6px}
 .chk{display:flex;gap:6px;align-items:center;color:var(--ink2)}
+.mine{display:grid;grid-template-columns:1fr auto auto;gap:6px}
+.mine input{min-width:0;background:#0a0e10;color:var(--ink);border:1px solid var(--line);border-radius:4px;font:12px var(--font-data);padding:5px 7px}
 .sel{display:grid;grid-template-columns:96px 1fr;gap:6px;align-items:center;color:var(--ink2)}
 #preset{width:100%}
 .note{color:var(--ink2);line-height:1.5}
@@ -68,6 +70,8 @@ body.hidep #toggle{display:block}
       <h2>Preset</h2>
       <select id="preset"></select>
       <label class="sel" style="margin-top:6px"><span>CA family</span><select id="ca-preset"><option value="">—</option></select></label>
+      <label class="sel"><span>my presets</span><select id="my-preset"><option value="">—</option></select></label>
+      <div class="mine"><input id="my-name" type="text" placeholder="name for Ctrl+S" aria-label="preset name" spellcheck="false"><button id="b-save" type="button" title="Ctrl+S">save</button><button id="b-del" type="button" title="delete the selected preset">delete</button></div>
       <div class="btns">
         <button id="b-reset" type="button" title="R">reset</button>
         <button id="b-mutate" type="button" title="M">new mutations</button>
@@ -516,6 +520,7 @@ const look = { speed:5, motion_blur:true, blur_quality:2, world_size:0.4, bright
 let frame = 0, paused = false, rulesDirty = true;
 const cam = { x:0, y:0, zoom:1 };
 
+let source = {kind: "fl", name: "_Default"};   // where the current settings came from
 function loadPreset(c){
   for(const [k] of PHYS) S[k] = c[k];
   for(const k of ["disable_symmetry","absolute_orientation","orientation_mix","boundary_conditions","initial_conditions",
@@ -766,8 +771,86 @@ for(const g of ["Core", "Advanced"]){
 }
 const caSel = $("ca-preset");
 CA_PRESETS.forEach((c, i) => { const o = document.createElement("option"); o.value = i; o.textContent = c.name; caSel.appendChild(o); });
-sel.addEventListener("change", () => { caSel.value = ""; loadPreset(PRESETS[+sel.value]); });
-caSel.addEventListener("change", () => { if(caSel.value === "") return; sel.selectedIndex = -1; loadPreset(CA_PRESETS[+caSel.value]); });
+sel.addEventListener("change", () => { caSel.value = ""; mySel.value = ""; const c = PRESETS[+sel.value]; source = {kind: "fl", name: c.name}; loadPreset(c); });
+caSel.addEventListener("change", () => { if(caSel.value === "") return; sel.selectedIndex = -1; mySel.value = "";
+  const c = CA_PRESETS[+caSel.value]; source = {kind: "ca", name: c.name}; loadPreset(c); });
+
+// ---------------------------------------------------------------- my presets (browser storage)
+// Ctrl+S saves everything that defines the run: physics, setup, the parent brain and its
+// mutation seed, the grid knobs and the look. The working state is also kept as you go, so a
+// refresh comes back to exactly this.
+const KEY_SAVED = "fluoddity-ca:saved", KEY_CURRENT = "fluoddity-ca:current";
+const LOOK_KEYS = ["spread", "pressure", "rest", "brain", "speed", "brightness", "bloom", "motion_blur", "smooth", "world_size_i"];
+const mySel = $("my-preset"), myName = $("my-name");
+function readStore(k, dflt){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : dflt; } catch(e){ return dflt; } }
+function writeStore(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch(e){ return false; } }
+let saved = readStore(KEY_SAVED, []);
+function snapshot(){
+  const lk = {}; for(const k of LOOK_KEYS) lk[k] = look[k];
+  return { S: {...S}, rule: Array.from(baseRule), look: lk, cam: {...cam}, source };
+}
+function applyConfig(c){
+  for(const k in c.S) S[k] = c.S[k];
+  baseRule = Float32Array.from(c.rule);
+  history.length = 0; history.push({rule: baseRule.slice(), seed: S.rule_seed});
+  const ws0 = look.world_size_i;
+  for(const k of LOOK_KEYS) if(c.look && c.look[k] !== undefined) look[k] = c.look[k];
+  if(look.world_size_i !== ws0) buildWorld([0.1,0.2,0.4,0.7,1.0][look.world_size_i]);
+  if(c.cam) Object.assign(cam, c.cam);
+  if(c.source) source = c.source;
+  syncUI(); rulesDirty = true; frame = 0;
+}
+function fillMine(selectIdx){
+  mySel.innerHTML = '<option value="">—</option>';
+  saved.forEach((c, i) => { const o = document.createElement("option"); o.value = i; o.textContent = c.name; mySel.appendChild(o); });
+  mySel.value = selectIdx === undefined || selectIdx < 0 ? "" : String(selectIdx);
+}
+function defaultName(){
+  const base = source.kind === "my" ? source.name.replace(/ \d+$/, "") : source.name;
+  let n = 1; while(saved.some(c => c.name === `${base} ${n}`)) n++;
+  return `${base} ${n}`;
+}
+function saveMine(){
+  const sel_i = mySel.value === "" ? -1 : +mySel.value;
+  let name = myName.value.trim();
+  const entry = {...snapshot(), saved: new Date().toISOString()};
+  let i;
+  if(sel_i >= 0 && (name === "" || name === saved[sel_i].name)){   // same name: overwrite the selected one
+    entry.name = saved[sel_i].name; saved[sel_i] = entry; i = sel_i;
+  } else {
+    if(name === "" || saved.some(c => c.name === name)) name = name === "" ? defaultName() : name + " 2";
+    entry.name = name; saved.push(entry); i = saved.length - 1;
+  }
+  source = {kind: "my", name: entry.name}; saved[i].source = source;
+  const ok = writeStore(KEY_SAVED, saved);
+  fillMine(i); sel.selectedIndex = -1; caSel.value = "";
+  myName.value = entry.name; myName.focus(); myName.select();     // type to rename, Enter to keep
+  flash(ok ? `saved "${entry.name}"` : "could not save: browser storage is blocked");
+}
+function renameMine(){
+  const i = mySel.value === "" ? -1 : +mySel.value, name = myName.value.trim();
+  if(i < 0 || name === "" || name === saved[i].name) return;
+  saved[i].name = name; saved[i].source = {kind: "my", name}; source = saved[i].source;
+  writeStore(KEY_SAVED, saved); fillMine(i); flash(`renamed to "${name}"`);
+}
+mySel.addEventListener("change", () => {
+  if(mySel.value === ""){ myName.value = ""; return; }
+  const c = saved[+mySel.value]; sel.selectedIndex = -1; caSel.value = "";
+  myName.value = c.name; applyConfig(c); source = {kind: "my", name: c.name};
+});
+myName.addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); renameMine(); myName.blur(); } });
+myName.addEventListener("change", renameMine);
+$("b-save").onclick = saveMine;
+$("b-del").onclick = () => {
+  const i = mySel.value === "" ? -1 : +mySel.value; if(i < 0) return;
+  const name = saved[i].name; saved.splice(i, 1); writeStore(KEY_SAVED, saved); fillMine(-1); myName.value = ""; flash(`deleted "${name}"`);
+};
+window.addEventListener("keydown", e => {
+  if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s"){ e.preventDefault(); saveMine(); }
+}, true);
+fillMine(-1);
+let lastAuto = "";
+setInterval(() => { const s = JSON.stringify(snapshot()); if(s !== lastAuto){ lastAuto = s; writeStore(KEY_CURRENT, JSON.parse(s)); } }, 500);
 
 let flashMsg = "", flashT = 0;
 function flash(m){ flashMsg = m; flashT = performance.now(); }
@@ -813,7 +896,15 @@ window.addEventListener("resize", () => buildDisplay());
 buildWorld(look.world_size); buildDisplay();
 const startName = "_Default";
 const startIdx = Math.max(0, PRESETS.findIndex(c => c.name === startName));
-sel.value = startIdx; loadPreset(PRESETS[startIdx]);
+const resume = readStore(KEY_CURRENT, null);
+if(resume && resume.S && resume.rule && resume.rule.length === 80){
+  applyConfig(resume);
+  sel.selectedIndex = -1;
+  if(source.kind === "fl"){ const i = PRESETS.findIndex(c => c.name === source.name); if(i >= 0) sel.value = i; }
+  else if(source.kind === "ca"){ const i = CA_PRESETS.findIndex(c => c.name === source.name); if(i >= 0) caSel.value = i; }
+  else if(source.kind === "my"){ const i = saved.findIndex(c => c.name === source.name); if(i >= 0){ fillMine(i); myName.value = source.name; } }
+  flash("restored your last settings");
+} else { sel.value = startIdx; loadPreset(PRESETS[startIdx]); }
 let last = performance.now(), fps = 0;
 function loop(t){
   frameTick();
