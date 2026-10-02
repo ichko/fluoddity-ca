@@ -1,0 +1,7 @@
+== paint {'dyn': 'dynD', 'tag': 'paintE', 'paint': 4, 'paint_w': 64, 'init': 'paintD', 'tmax': 500, 't0': 48, 'every': 16, 'iters': 1500, 'lr': 0.0015, 'wpix': 0.5, 'threads': 1, 'hours': 8.0, 'resume': 'auto', 'ckpt_min': 10.0, 'seed': 0}
+paint from paintD
+recorded 500 steps in 34s, 1234 MB; active cells at the end 9293
+it     0 colour 0.0803 best 0.0803 {48: 0.11, 96: 0.079, 160: 0.079, 500: 0.081} gn 5.7e+00 57.4s/it
+it    10 colour 0.0762 best 0.0730 {48: 0.106, 96: 0.072, 160: 0.072, 500: 0.081} gn 7.5e+00 47.4s/it
+it    20 colour 0.0715 best 0.0704 {48: 0.104, 96: 0.071, 160: 0.07, 500: 0.072} gn 8.4e+00 44.5s/it
+it    30 colour 0.0758 best 0.0672 {48: 0.106, 96: 0.071, 160: 0.07, 500: 0.084} gn 1.8e+01 47.7s/it

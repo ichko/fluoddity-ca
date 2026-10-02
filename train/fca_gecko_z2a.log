@@ -1,0 +1,28 @@
+== z2a {'tag': 'z2a', 'grid': 512, 'preset': 'auto', 'screen_top': 3, 'screen_iters': 40, 'mut_mult': 1.0, 'absori': -1, 'centres': 10, 'see_mass': True, 'hidden': 6, 'extra_amp': 0.05, 'extra_freq': 0.01, 'spread': 2.0, 'train_spread': 0, 'spread_to': 1.0, 'spread_anneal': 100, 'pressure': 0.3, 'train_pressure': 1, 'press_mode': 0, 'rest': 0.5, 'max_spread': 2.0, 'seed_r': 24.0, 'seed_vel': 'radial', 'seed_speed': 0.002, 'learn_seed_v': 1, 'learn_seed_h': 1, 'seed_lowres': 0, 'ori_eps': 0.01, 'gdamp': 1.0, 'zoom': 2, 'trail_reps': 0, 'luma': False, 'mass_scale': 1.0, 't0': 48, 't1': 80, 'hold': 16, 'iters': 1500, 'lr': 0.0005, 'lr_seed': 0.01, 'clip': 1.0, 'threads': 2, 'seed': 0, 'resume': 'auto', 'init_from': 'fca_gecko_z2.pt', 'hours': 10.0, 'colour': False, 'wcol': 0.5, 'hue_sens': None, 'hue_off': 0.33, 'train_hue_off': 1, 'rgb': False, 'brake': True, 'lr_brake': 0.02, 'brake_init': 5.0, 'paint': -1, 'paint_w': 64, 'freeze_dyn': False, 'wpix': 0.5, 'batch': 2, 'max_age': 500, 'age_ramp': 100, 'pool': 32, 'seg_min': 16, 'seg_max': 32, 'score_every': 4, 'eval_every': 25, 'rollback': 1.25, 'ckpt_min': 10.0, 'opt': 'grad', 'es_pop': 12, 'es_sigma': 0.03, 'es_lr': 0.02, 'es_seed': 1}
+warm start from fca_gecko_z2.pt (Worms, best 0.3282)
+start from preset Worms; params 21398
+pool 32 x2, segments 16..32, score every 4, age cap 96->500 over 100 its; before: {96: 0.3758, 160: 0.3358, 300: 0.3035, 500: 0.2977} score 0.3282
+it     0 loss 0.6759 [seed->76: 0.418; seed->52: 0.444] gn 9.6e+06 maxage 76 cap 96 lr 2.50e-05 37.9s/it
+it    10 loss 0.6487 [seed->78: 0.403; seed->50: 0.425] gn 3.7e+07 maxage 115 cap 136 lr 2.75e-04 34.4s/it
+it    20 loss 0.6243 [seed->65: 0.434; 97->129: 0.362] gn 4.3e+07 maxage 146 cap 176 lr 5.00e-04 32.5s/it
+eval it 25: {96: 0.4718, 160: 0.4303, 300: 0.3925, 500: 0.3773} score 0.4180 (best 0.3282 at 0) (annealing spread)
+it    30 loss 0.6214 [seed->84: 0.454; 71->94: 0.340] gn 1.9e+07 maxage 146 cap 217 lr 5.00e-04 35.7s/it
+it    40 loss 0.6698 [117->149: 0.354; seed->74: 0.507] gn 3.3e+08 maxage 204 cap 257 lr 4.99e-04 38.1s/it
+it    50 loss 0.7950 [84->115: 0.494; seed->85: 0.532] gn 1.0e+09 maxage 204 cap 298 lr 4.99e-04 42.4s/it
+eval it 50: {96: 0.481, 160: 0.4456, 300: 0.4107, 500: 0.3956} score 0.4332 (best 0.3282 at 0) (annealing spread)
+it    60 loss 0.7801 [seed->65: 0.659; 131->161: 0.349] gn 6.5e+08 maxage 204 cap 338 lr 4.98e-04 39.3s/it
+it    70 loss 0.7874 [seed->94: 0.725; 159->191: 0.294] gn 1.0e+10 maxage 204 cap 378 lr 4.98e-04 59.0s/it
+eval it 75: {96: 0.6776, 160: 0.6383, 300: 0.6106, 500: 0.6056} score 0.6330 (best 0.3282 at 0) (annealing spread)
+it    80 loss 0.8516 [seed->55: 0.774; 156->188: 0.328] gn 8.1e+09 maxage 204 cap 419 lr 4.97e-04 35.4s/it
+it    90 loss 0.8270 [seed->87: 0.750; 188->219: 0.322] gn 1.8e+10 maxage 247 cap 459 lr 4.96e-04 51.3s/it
+it   100 loss 0.9026 [seed->55: 0.866; 247->273: 0.299] gn 5.6e+11 maxage 273 cap 500 lr 4.95e-04 36.5s/it
+eval it 100: {96: 0.8033, 160: 0.7681, 300: 0.7402, 500: 0.7289} score 0.7601 (best 0.7601 at 100) NEW BEST
+best params, from the seed: {96: 0.8033, 160: 0.7681, 300: 0.7402, 500: 0.7289}
+pictures: /home/user/field-life/train/fca_gecko_z2a_strip.png /home/user/field-life/train/fca_gecko_z2a_vs.png
+it   110 loss 1.1944 [69->98: 0.753; seed->66: 0.801] gn 9.6e+10 maxage 299 cap 500 lr 4.94e-04 46.5s/it
+it   120 loss 0.9679 [seed->53: 0.889; 203->233: 0.360] gn 2.9e+10 maxage 299 cap 500 lr 4.93e-04 39.1s/it
+eval it 125: {96: 0.7695, 160: 0.7323, 300: 0.7021, 500: 0.697} score 0.7252 (best 0.7252 at 125) NEW BEST
+it   130 loss 1.2521 [58->87: 0.757; seed->69: 0.875] gn 6.3e+10 maxage 303 cap 500 lr 4.92e-04 49.2s/it
+it   140 loss 1.1364 [seed->85: 0.888; 192->213: 0.592] gn 2.5e+11 maxage 323 cap 500 lr 4.90e-04 52.9s/it
+it   150 loss 1.0013 [213->232: 0.365; seed->53: 0.926] gn 4.1e+10 maxage 323 cap 500 lr 4.89e-04 32.5s/it
+eval it 150: {96: 0.8058, 160: 0.7772, 300: 0.7499, 500: 0.7413} score 0.7685 (best 0.7252 at 125)

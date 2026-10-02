@@ -134,7 +134,8 @@ step():
   <tr><td>+ 6 hidden channels</td><td class="num">0.098</td><td>a clean silhouette, stable to step 160</td></tr>
   <tr><td>launch velocity frozen</td><td class="num">0.443</td><td>an 8-armed star</td></tr>
 </table>
-<figure><img src="train/fca_gecko_hidden6_grow.gif" alt="The gecko growing"><figcaption>The best fit growing from its seed (trained on steps 48–96).</figcaption></figure>
+<figure><img src="train/fca_gecko_best_colour.gif" alt="The gecko growing in colour"><figcaption>The latest fit: it grows from a disc, holds its shape to step 500, and is coloured by three channels carried with the mass. The loss is plotted live underneath.</figcaption></figure>
+<p>Training with a sample pool, a one-cell move and a pixel-level loss term made the shape stable. The mass loss is 0.083 at step 96 and 0.131 at step 500, against 0.100 and 0.238 before. Colour comes from three channels carried along with the mass, trained on top, with a colour loss of 0.07. It doesn't yet have the red spots, toes or crisp edges.</p>
 <p>Neither part draws the gecko alone. The brain with a symmetric launch grows a star, and the learned launch without the brain smears into a blob. The rule is symmetric, so the launch velocity is the hint that gives the animal a front.</p>
 <figure><img src="train/fca_gecko_hidden6_ablate.png" alt="Ablation"><figcaption>Full model, brain off, launch reset to radial, and both.</figcaption></figure>
 

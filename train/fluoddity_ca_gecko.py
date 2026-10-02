@@ -107,7 +107,8 @@ class FCA(nn.Module):
         self.N = a.grid
         self.ws = (a.grid / 1024.0) ** 2
         self.SQ = math.sqrt(self.ws)
-        nC, Hd = a.centres, a.hidden
+        self.Hd = a.hidden + (3 if getattr(a, "rgb", False) else 0)   # --rgb: three more carried channels, read as colour
+        nC, Hd = a.centres, self.Hd
         # brain inputs: L(2) R(2) [Lm Rm m] [h(H) Lh(H) Rh(H)]
         self.din = 4 + (3 if a.see_mass else 0) + 3 * Hd
         fr, am = bake_rule(preset["rule"], preset["rule_seed"], preset["mutation_scale"] * a.mut_mult)
@@ -131,6 +132,21 @@ class FCA(nn.Module):
             self.hgain = nn.Parameter(torch.tensor(1.0))
         if a.see_mass:
             self.mgain = nn.Parameter(torch.tensor(1.0))
+        if getattr(a, "brake", False):   # per-cell gate on the velocity, from the brain's features
+            self.wb = nn.Parameter(torch.zeros(nC, 4))
+            self.bb = nn.Parameter(torch.tensor(float(a.brake_init)))
+        # --paint K: a colour layer riding on the mass, 3 RGB + K paint-hidden channels, carried
+        # mass-weighted like the hidden ones and rewritten every step by its own small head. It reads
+        # the brain's inputs, its own paint, the paint under the two eyes and the 3x3 mean paint, but
+        # the dynamics never read it and its gradient never reaches the dynamics.
+        self.Pc = (3 + a.paint) if getattr(a, "paint", -1) >= 0 else 0
+        assert not (self.Pc and a.colour), "--paint and --colour both use the last channels"
+        if self.Pc:
+            dp, W = self.din + 4 * self.Pc + 1, a.paint_w
+            self.pw1 = nn.Parameter(torch.randn(W, dp, generator=g) / math.sqrt(dp))
+            self.pb1 = nn.Parameter(torch.zeros(W))
+            self.pw2 = nn.Parameter(torch.zeros(self.Pc, W))
+            self.pb2 = nn.Parameter(torch.zeros(self.Pc))
         p = {k: preset[k] for k in PHYS}
         self.raw = nn.ParameterDict({
             "axial": nn.Parameter(torch.tensor(float(p["axial_force"]))),
@@ -180,6 +196,8 @@ class FCA(nn.Module):
             sv = sv + torch.randn(2, S, S, generator=g) * 1e-5
         self.seed_v = nn.Parameter(sv)
         if not a.learn_seed_v or a.seed_lowres: self.seed_v.requires_grad_(False)
+        if self.Pc:
+            self.pseed = nn.Parameter(torch.zeros(self.Pc, S, S))   # the seed's paint (pre-tanh)
         if a.seed_lowres:   # a seed hint of only 2*K*K numbers: a coarse velocity correction, upsampled
             self.seed_c = nn.Parameter(torch.zeros(2, a.seed_lowres, a.seed_lowres))
         if Hd:
@@ -200,7 +218,7 @@ class FCA(nn.Module):
                     angle=r["angle"], gfm=r["gfm"], dist=r["dist"],
                     persist=torch.sigmoid(r["persist"]) * 0.999,
                     diff=0.001 + 0.999 * torch.sigmoid(r["diff"]),
-                    press=F.softplus(r["press"]), spread=1.0 + F.softplus(r["spread"]))
+                    press=F.softplus(r["press"]), spread=(1.0 + F.softplus(r["spread"])).clamp(max=self.nt - 1.0))
 
     def init_state(self, total_mass):
         n = self.N
@@ -208,11 +226,14 @@ class FCA(nn.Module):
         v = torch.zeros(2, n, n)
         v = F.pad(self.seed_vel(), (self.s0, n - self.s1, self.s0, n - self.s1))
         st = [m, m * v[0], m * v[1]]
-        if self.a.hidden:
+        if self.Hd:
             h = torch.tanh(F.pad(self.seed_h, (self.s0, n - self.s1, self.s0, n - self.s1)))
-            st += [m * h[k] for k in range(self.a.hidden)]
+            st += [m * h[k] for k in range(self.Hd)]
         if self.a.colour:
             st += [torch.zeros_like(m)]   # the page's col, mass-weighted; nothing has a colour yet
+        if self.Pc:
+            pp = torch.tanh(F.pad(self.pseed, (self.s0, n - self.s1, self.s0, n - self.s1)))
+            st += [m * pp[k] for k in range(self.Pc)]
         return torch.stack(st).reshape(len(st), -1), torch.zeros(2, n * n)
 
     def sample(self, Fm, px, py):
@@ -237,7 +258,7 @@ class FCA(nn.Module):
     def step(self, S, T):
         """S [3+H, n*n] = mass, momentum, mass*hidden; T [2, n*n] = trail. Only cells holding
         mass run the brain and move (the page's m <= 1e-12 early-out)."""
-        a, P, n, Hd = self.a, self.P(), self.N, self.a.hidden
+        a, P, n, Hd = self.a, self.P(), self.N, self.Hd
         m = S[0]
         ia = torch.nonzero(m > 1e-12).squeeze(1)
         ma = m[ia]
@@ -302,34 +323,77 @@ class FCA(nn.Module):
         if a.train_pressure or a.pressure > 0:
             Pm = F.relu(m - a.rest).reshape(n, n)
             gx = torch.zeros_like(Pm); gy = torch.zeros_like(Pm)
+            free = getattr(a, "press_mode", 0) == 1
+            if free:   # free surface: only differences with neighbours inside the body push (none into the vacuum)
+                bmm = F.avg_pool2d(F.pad(m.reshape(1, 1, n, n), (1, 1, 1, 1), mode="circular"), 3, 1)[0, 0]
+                occ = ((bmm - 0.4) / 0.3).clamp(0, 1)
             for dy in (-1, 0, 1):
                 for dx in (-1, 0, 1):
                     if dx == 0 and dy == 0: continue
                     w = 2.0 if (dx == 0 or dy == 0) else 1.0
                     sh = torch.roll(Pm, (-dy, -dx), (0, 1))
+                    if free: sh = (sh - Pm) * torch.roll(occ, (-dy, -dx), (0, 1))
                     gx = gx + w * sh * dx; gy = gy + w * sh * dy
             g = torch.stack([gx.reshape(-1)[ia], gy.reshape(-1)[ia]])
             force = force - P["press"] * (2.0 / n) * g / 8.0
         vel = vel * P["drag"] + force
+        feats = fb + fm if fm is not None else fb
+        if getattr(a, "brake", False):   # the brain may stop a cell: velocity and strafe both times a gate in (0,1)
+            gate = torch.sigmoid(torch.einsum("cf,cfa->a", self.wb, feats) + self.bb)
+            vel = vel * gate; strafe = strafe * gate
         disp = (vel + strafe * P["strafe"]) * cells
         Q = [ma, ma * vel[0], ma * vel[1]]
         if Hd:
-            feats = fb + fm if fm is not None else fb
             dh = torch.einsum("kcf,cfa->ka", self.wh, feats) + self.bh[:, None]
             hn = torch.tanh(h + dh)
             Q = Q + [ma * hn[i] for i in range(Hd)]
         if a.colour:   # FS_BRAIN: col = base.x + mir.x, carried with the mass through the move
             Q = Q + [ma * (base[0] + mir[0])]
-        S2 = self.move(torch.stack(Q), xa + disp[0], ya + disp[1], P["spread"], S.shape[1])
+        if self.Pc:
+            pinfo = self.paint_info(S, ma, ia, xa, ya, lo, ro, ins_b, ins_m); self._pinfo = pinfo
+            Qp = self.paint_core(S[-self.Pc:], pinfo)
+        else:
+            Qp = None
+        S2 = self.move(torch.stack(Q), xa + disp[0], ya + disp[1], P["spread"], S.shape[1], Qd=Qp)
         # trail: blur, fade, take the momentum
         p = P["persist"]; d = P["diff"] ** 2
         K = 4.0 / (torch.pow(5.0, d) - 1.0)
-        T2d = T.reshape(2, n, n)
-        nb = sum(torch.roll(T2d, s, ax) for s in (1, -1) for ax in (1, 2)).reshape(2, -1)
-        T2 = (T * K + nb) / (4.0 + K) * p + S2[1:3] * (1.0 - p.clamp(0.001, 0.999)) * 7.07
+        reps = getattr(a, "trail_reps", 0) or getattr(a, "zoom", 1) ** 2   # --zoom z: z^2 blur passes, the same diffusion in target pixels
+        Tb = T
+        for _ in range(reps):
+            T2d = Tb.reshape(2, n, n)
+            nb = sum(torch.roll(T2d, s, ax) for s in (1, -1) for ax in (1, 2)).reshape(2, -1)
+            Tb = (Tb * K + nb) / (4.0 + K)
+        T2 = Tb * p + S2[1:3] * (1.0 - p.clamp(0.001, 0.999)) * 7.07
         return S2, T2
 
-    def move(self, Q, qx, qy, s, size):
+    def paint_info(self, S, ma, ia, xa, ya, lo, ro, ins_b, ins_m):
+        """what the paint reads from the dynamics in one step, all detached"""
+        n, cells = self.N, self.N / 2.0
+        box = lambda X: F.avg_pool2d(F.pad(X[None], (1, 1, 1, 1), mode="circular"), 3, 1)[0]
+        return dict(ia=ia, md=ma.detach(),
+                    lx=(xa + lo[0] * cells).detach(), ly=(ya + lo[1] * cells).detach(),
+                    rx=(xa + ro[0] * cells).detach(), ry=(ya + ro[1] * cells).detach(),
+                    bm=box(S[0].detach().reshape(1, n, n)).reshape(-1)[ia],
+                    xb=torch.asinh(torch.cat(ins_b).detach()),
+                    xm=torch.asinh(torch.cat(ins_m).detach()) if self.sym else None)
+
+    def paint_core(self, Fp, d):
+        """Fp [Pc, n*n] = mass * paint; returns mass * new paint at the active cells (before the move)"""
+        n, Pc = self.N, self.Pc
+        ia, md, bm = d["ia"], d["md"], d["bm"]
+        pv = (Fp[:, ia] / md).clamp(-0.995, 0.995)
+        PL = self.sample(Fp, d["lx"], d["ly"]); PR = self.sample(Fp, d["rx"], d["ry"])
+        box = lambda X: F.avg_pool2d(F.pad(X[None], (1, 1, 1, 1), mode="circular"), 3, 1)[0]
+        nbp = box(Fp.reshape(Pc, n, n)).reshape(Pc, -1)[:, ia] / bm.clamp_min(1e-6)
+        hb = F.relu(self.pw1 @ torch.cat([d["xb"], pv, PL, PR, nbp, bm[None]]) + self.pb1[:, None])
+        if d["xm"] is not None:
+            hb = hb + F.relu(self.pw1 @ torch.cat([d["xm"], pv, PR, PL, nbp, bm[None]]) + self.pb1[:, None])
+        dp = self.pw2 @ hb + self.pb2[:, None]
+        pn = torch.tanh(torch.atanh(pv) + dp)
+        return md[None] * pn
+
+    def move(self, Q, qx, qy, s, size, Qd=None):
         """reintegration tracking: source j's Q[:, j] is a box of side s centred at (qx, qy) in
         cells; every cell gets the fraction of the box over it. nt x nt cells can be touched."""
         n, nt = self.N, self.nt
@@ -345,12 +409,25 @@ class FCA(nn.Module):
         cx, wx = taps(torch.remainder(qx, n)); cy, wy = taps(torch.remainder(qy, n))   # on the torus, so far jumps keep their precision
         tgt = (cy[:, None] * n + cx[None]).reshape(-1)
         w = (wy[:, None] * wx[None]).reshape(-1)
+        if getattr(self, "rec", None) is not None:   # recording the trajectory for paint-only training
+            self.rec.append(dict(self._pinfo, tgt=tgt, w=w.detach()))
         vals = (Q[:, None] * w.reshape(nt * nt, -1)[None]).reshape(Q.shape[0], -1)
-        return torch.zeros(Q.shape[0], size).index_add(1, tgt, vals)
+        out = torch.zeros(Q.shape[0], size).index_add(1, tgt, vals)
+        if Qd is not None:   # carried along by the same move, but blind to where it went (no gradient to the positions)
+            vd = (Qd[:, None] * w.detach().reshape(nt * nt, -1)[None]).reshape(Qd.shape[0], -1)
+            out = torch.cat([out, torch.zeros(Qd.shape[0], size).index_add(1, tgt, vd)])
+        return out
 
     def render(self, S):
-        """FS_CELLS: hsv(sens*col/m + off, 0.8, 1) * m (times a brightness), [3, n, n]"""
+        """[3, n, n] premultiplied colour. --rgb: the carried colour channels, (h+1)/2 * m.
+        Otherwise FS_CELLS: hsv(sens*col/m + off, 0.8, 1) * m (times a brightness), [3, n, n]"""
         n = self.N
+        if self.Pc:   # the paint's first three channels, (p+1)/2 * mass
+            k = S.shape[0] - self.Pc
+            return ((S[0].detach()[None] + S[k:k + 3]) * 0.5).reshape(3, n, n)
+        if getattr(self.a, "rgb", False):
+            k = 3 + self.a.hidden
+            return ((S[0][None] + S[k:k + 3]) * 0.5).reshape(3, n, n)
         m = S[0].reshape(n, n)
         col = (S[-1].reshape(n, n) / m.clamp_min(1e-12)) * (m > 1e-12)
         hue = self.hue_sens * col + self.hue_off
@@ -381,6 +458,8 @@ def load_target(a):
     if a.luma:
         al = al * (0.3 * im[..., 0] + 0.59 * im[..., 1] + 0.11 * im[..., 2])
     al = al[::-1].copy()          # row 0 at the bottom, as the page's y
+    z = getattr(a, "zoom", 1)
+    if z > 1: al = np.repeat(np.repeat(al, z, 0), z, 1)   # sub-pixel: every target pixel is z x z cells
     n, h = a.grid, al.shape[0]
     t = np.zeros((n, n), np.float32)
     o = (n - h) // 2
@@ -393,6 +472,8 @@ def load_target_rgb(a):
     from PIL import Image
     im = np.asarray(Image.open(os.path.join(HERE, "gecko.png")).convert("RGBA")).astype(np.float32) / 255
     rgb = (im[..., :3] * im[..., 3:4])[::-1].copy()
+    z = getattr(a, "zoom", 1)
+    if z > 1: rgb = np.repeat(np.repeat(rgb, z, 0), z, 1)
     n, h = a.grid, rgb.shape[0]
     t = np.zeros((3, n, n), np.float32)
     o = (n - h) // 2
@@ -425,23 +506,24 @@ def to_img(m, vmax):
 
 def save_pictures(model, tgt, total, a, tag):
     from PIL import Image, ImageDraw
-    n = a.grid; c0 = (n - 160) // 2
+    n = a.grid // getattr(a, "zoom", 1); c0 = (n - 160) // 2
     crop = lambda img: img[c0:c0 + 160, c0:c0 + 160]
     T1 = a.t1
-    steps = sorted(set([0, 8, 16, 24, 32, 48, a.t0, T1, T1 + 16, T1 + 48, 2 * T1] + ([300, 500] if a.pool else [])))
+    steps = sorted(set([0, 8, 16, 24, 32, 48, a.t0, T1, T1 + 16, 160, 300, 500]))
     with torch.no_grad():
         S0, T0 = model.init_state(total)
         out, _, _ = model.run(total, max(steps), keep=set(steps), ckpt=False, full=True)
     out[0] = S0
     vmax = float(tgt.max()) * 1.2
-    if a.colour:
+    N = model.N
+    if has_col(a):
         trgb = load_target_rgb(a)
-        cv = float(trgb.max()) * 1.2
-        show = lambda S: to_rgb_img(model.render(S), cv)
-        tshow = to_rgb_img(trgb, cv)
+        cv = float(trgb.max())
+        show = lambda S: to_rgb_img(view(a, model.render(S)), cv)
+        tshow = to_rgb_img(view(a, trgb), cv)
     else:
-        show = lambda S: to_img(S[0].reshape(n, n), vmax)
-        tshow = to_img(tgt, vmax)
+        show = lambda S: to_img(view(a, S[0].reshape(N, N)), vmax)
+        tshow = to_img(view(a, tgt), vmax)
     out = {k: show(v) for k, v in out.items()}
     tiles = [("target", crop(tshow))] + [(f"t={s}", crop(out[s])) for s in steps]
     W = 160 * len(tiles)
@@ -461,10 +543,15 @@ def save_params(model, path, extra):
     P = {k: float(v) for k, v in model.P().items()}
     d = dict(extra, phys=P, freq=model.freq.detach().tolist(), amp=model.amp.detach().tolist(),
              seed_v=model.seed_vel().detach().tolist(), sym=model.sym, absori=model.absori, orimix=model.orimix)
-    if model.a.hidden:
+    if model.Hd:
         d.update(wh=model.wh.detach().tolist(), bh=model.bh.detach().tolist(), hgain=float(model.hgain),
                  seed_h=model.seed_h.detach().tolist())
     if model.a.see_mass: d["mgain"] = float(model.mgain)
+    if getattr(model.a, "brake", False): d.update(brake_w=model.wb.detach().tolist(), brake_b=float(model.bb))
+    if model.Pc: d.update(paint_w1=model.pw1.detach().tolist(), paint_b1=model.pb1.detach().tolist(),
+                          paint_w2=model.pw2.detach().tolist(), paint_b2=model.pb2.detach().tolist(),
+                          paint_seed=model.pseed.detach().tolist())
+    if getattr(model.a, "rgb", False): d["rgb_channels"] = [3 + model.a.hidden + k for k in range(3)]
     if model.a.colour: d.update(hue_sensitivity=float(model.hue_sens), hue_offset=float(model.hue_off), brightness=float(model.cbright))
     # the page's 80 numbers, when the brain is the page's brain
     if model.freq.shape == (10, 4):
@@ -489,8 +576,11 @@ def main():
     ap.add_argument("--extra_freq", type=float, default=0.3)
     ap.add_argument("--spread", type=float, default=1.5)
     ap.add_argument("--train_spread", type=int, default=1)
+    ap.add_argument("--spread_to", type=float, default=0, help="pool training: anneal the spread linearly from --spread to this (0 = off)")
+    ap.add_argument("--spread_anneal", type=int, default=100, help="its of that anneal")
     ap.add_argument("--pressure", type=float, default=0.3)
     ap.add_argument("--train_pressure", type=int, default=1)
+    ap.add_argument("--press_mode", type=int, default=0, help="0: the page's pressure; 1: free surface (differences with in-body neighbours only)")
     ap.add_argument("--rest", type=float, default=1.0, help="mass above which pressure pushes")
     ap.add_argument("--max_spread", type=float, default=3.0, help="spread is capped here (sets the taps per axis)")
     ap.add_argument("--seed_r", type=float, default=12.0)
@@ -501,6 +591,8 @@ def main():
     ap.add_argument("--seed_lowres", type=int, default=0, help="K>0: seed velocity = default + a learned KxK correction, upsampled (2K^2 numbers in place of the full field)")
     ap.add_argument("--ori_eps", type=float, default=1e-2, help="world units; 0 = exact gradient")
     ap.add_argument("--gdamp", type=float, default=1.0, help="backward gain through each step (0.7 measured: worse than a random direction; 1.0 = exact, descends)")
+    ap.add_argument("--zoom", type=int, default=1, help="sub-pixel: every target pixel is z x z cells (use --grid 256*z, --seed_r 12*z); losses on z x z averages")
+    ap.add_argument("--trail_reps", type=int, default=0, help="trail blur passes per step (0 = zoom^2)")
     ap.add_argument("--luma", action="store_true")
     ap.add_argument("--mass_scale", type=float, default=1.0)
     ap.add_argument("--t0", type=int, default=48)
@@ -520,11 +612,22 @@ def main():
     ap.add_argument("--hue_sens", type=float, default=None, help="initial hue_sensitivity (default: the preset's)")
     ap.add_argument("--hue_off", type=float, default=0.33, help="initial hue offset (not on the page; 0.33 = green)")
     ap.add_argument("--train_hue_off", type=int, default=1)
+    ap.add_argument("--rgb", action="store_true", help="carry 3 colour channels (hidden-like, read by the eyes, rewritten by the brain); render (h+1)/2 * mass")
+    ap.add_argument("--brake", action="store_true", help="the brain gates each cell's velocity: v *= sigmoid(w.feats + b)")
+    ap.add_argument("--lr_brake", type=float, default=2e-2, help="Adam lr of the brake's weights and bias")
+    ap.add_argument("--brake_init", type=float, default=5.0, help="initial brake bias (5: gate 0.993, nearly off)")
+    ap.add_argument("--paint", type=int, default=-1, help="K>=0: a passive colour layer of 3 RGB + K paint-hidden channels (see FCA)")
+    ap.add_argument("--paint_w", type=int, default=64, help="width of the paint head")
+    ap.add_argument("--freeze_dyn", action="store_true", help="train only the paint layer; the dynamics stay as loaded")
+    ap.add_argument("--wpix", type=float, default=0.0, help="extra weight of the full-resolution pixel MSE (mass and colour)")
+    ap.add_argument("--batch", type=int, default=2, help="pool samples per iteration")
+    ap.add_argument("--max_age", type=int, default=600, help="pool states older than this go back to the seed")
+    ap.add_argument("--age_ramp", type=int, default=200, help="pool: the age cap grows from t1+hold to max_age over this many its")
     ap.add_argument("--pool", type=int, default=0, help="sample pool size (Growing NCA); 0 = train from the seed only")
     ap.add_argument("--seg_min", type=int, default=32)
     ap.add_argument("--seg_max", type=int, default=64)
     ap.add_argument("--score_every", type=int, default=4, help="pool training scores every this many frames once grown")
-    ap.add_argument("--eval_every", type=int, default=50, help="pool training: long evaluation from the seed every N its")
+    ap.add_argument("--eval_every", type=int, default=25, help="pool training: long evaluation from the seed every N its")
     ap.add_argument("--rollback", type=float, default=1.25, help="if the running loss passes this x best, reload best and halve lr (0 = off)")
     ap.add_argument("--ckpt_min", type=float, default=10.0, help="save params+optimizer+iteration every this many minutes")
     ap.add_argument("--opt", default="grad", choices=["grad", "es"],
@@ -584,6 +687,17 @@ def main():
         if not a.resume:
             start = ck["preset"]; model = FCA(a, presets[start])
         own = model.state_dict()
+        sa = ck["args"]
+        if sa.get("zoom", 1) != a.zoom or sa.get("grid", 256) != a.grid:
+            src = rezoom(src, sa, a, model); say(f"rescaled {a.init_from} from grid {sa.get('grid')} zoom {sa.get('zoom', 1)} to grid {a.grid} zoom {a.zoom}")
+        Hs = sa.get("hidden", 0) + (3 if sa.get("rgb", False) else 0); Hd = model.Hd
+        if Hs != Hd and "freq" in src and sa.get("see_mass", False) == a.see_mass:
+            b0 = 4 + (3 if a.see_mass else 0); f_src = src["freq"]; f_new = own["freq"].clone()
+            nc = min(f_src.shape[0], f_new.shape[0]); H = min(Hs, Hd)
+            f_new[:nc, :b0] = f_src[:nc, :b0]
+            for blk in range(3):
+                f_new[:nc, b0 + blk * Hd: b0 + blk * Hd + H] = f_src[:nc, b0 + blk * Hs: b0 + blk * Hs + H]
+            src = dict(src); src["freq"] = f_new
         with torch.no_grad():
             for k, v in src.items():
                 if k not in own: continue
@@ -591,8 +705,12 @@ def main():
                 elif own[k].dim() == v.dim():
                     sl = tuple(slice(0, min(x, y)) for x, y in zip(own[k].shape, v.shape))
                     own[k][sl] = v[sl]
+        if not a.train_spread: own["raw.spread"] = torch.tensor(isp(a.spread - 1.0))   # an untrained spread is the one asked for
         model.load_state_dict(own)
         say(f"warm start from {a.init_from} ({ck['preset']}, best {ck.get('best')})")
+    if a.freeze_dyn:
+        for nm, p in model.named_parameters():
+            if nm not in ("pw1", "pb1", "pw2", "pb2", "pseed"): p.requires_grad_(False)
     say(f"start from preset {start}; params {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     if a.pool:
         train_pool(model, a, tgt, total, a.iters, say, start, ck_resume)
@@ -600,6 +718,29 @@ def main():
         train_es(model, a, tgt, total, a.iters, say, start, ck_resume)
     else:
         train(model, a, tgt, total, a.iters, say, start, ck=ck_resume)
+
+
+def rezoom(src, sa, a, model):
+    """a state fitted at (grid n0, zoom z0), rewritten so that every length in cells is
+    k = z/z0 times longer at (grid n, zoom z): eye distance x k, displacement per step x k
+    (velocities in world units x k*n0/n, forces via global_force_mult x k), the trail the
+    brain reads unchanged (sensor_gain / k), the pressure push x k over gradients k times
+    shallower (pressure x k^2), the seed fields upsampled. Trail blur per step and the
+    one-cell box stay in cells: that is the point."""
+    n0, z0, n, z = sa.get("grid", 256), sa.get("zoom", 1), a.grid, a.zoom
+    k = z / z0
+    src = dict(src)
+    src["raw.gfm"] = src["raw.gfm"] * k
+    src["raw.dist"] = src["raw.dist"] * k
+    src["raw.gain"] = src["raw.gain"] / k
+    src["raw.press"] = torch.tensor(isp(float(F.softplus(src["raw.press"])) * k * k))
+    src["raw.spread"] = torch.tensor(isp(max(a.spread - 1.0, 1e-6)))   # the spread asked for (in new cells)
+    S = model.s1 - model.s0
+    up = lambda X: F.interpolate(X[None], size=(S, S), mode="bilinear", align_corners=True)[0]
+    src["seed_v"] = up(src["seed_v"]) * (k * n0 / n)
+    for key in ("seed_h", "pseed"):
+        if key in src: src[key] = up(src[key])
+    return src
 
 
 def lr_factor(i, iters):
@@ -614,23 +755,58 @@ def save_ckpt(path, **kw):
 def finish(model, a, tgt, total, say, name, best, best_state, iters):
     if best_state is None: return
     model.load_state_dict(best_state)
-    save_params(model, os.path.join(HERE, f"fca_gecko_{a.tag}.json"), {"preset": name, "best": best, "iters": iters, "args": vars(a)})
+    r = long_eval(model, a, tgt, total)
+    save_params(model, os.path.join(HERE, f"fca_gecko_{a.tag}.json"), {"preset": name, "best": best, "iters": iters, "args": vars(a),
+                                                                         "long_eval": {str(k): v for k, v in r.items()}})
+    say(f"best params, from the seed: {r}")
     say("pictures:", *save_pictures(model, tgt, total, a, a.tag))
 
 
+def has_col(a):
+    return a.colour or getattr(a, "rgb", False) or getattr(a, "paint", -1) >= 0
+
+
+def pix_loss(m, tgt):
+    """full-resolution MSE over the target's power"""
+    return ((m - tgt) ** 2).mean() / (tgt ** 2).mean()
+
+
+def view(a, X):
+    """--zoom z: what is compared with (and shown as) the picture, the z x z average of the cells"""
+    z = getattr(a, "zoom", 1)
+    if z <= 1: return X
+    return F.avg_pool2d(X[None, None], z)[0, 0] if X.dim() == 2 else F.avg_pool2d(X[None], z)[0]
+
+
 def frame_loss(model, S, tgt, trgb, a):
-    """(total, mass part, colour part) for one full state"""
-    lm = ms_loss(S[0].reshape(model.N, model.N), tgt)
-    if not a.colour: return lm, lm, torch.zeros(())
-    lc = ms_loss(model.render(S), trgb)
-    return lm + a.wcol * lc, lm, lc
+    """(training objective, mass ms_loss, colour ms_loss) for one full state. --zoom: on the
+    z x z averages (the target's own resolution), so blur below a target pixel costs nothing"""
+    if getattr(a, "zoom", 1) > 1:
+        tgt = view(a, tgt); trgb = view(a, trgb) if trgb is not None else None
+        m = view(a, S[0].reshape(model.N, model.N))
+        lm = ms_loss(m, tgt)
+        L = lm + a.wpix * pix_loss(m, tgt) if a.wpix else lm
+        if not has_col(a): return L, lm, torch.zeros(())
+        R = view(a, model.render(S)); lc = ms_loss(R, trgb)
+        return L + a.wcol * (lc + a.wpix * pix_loss(R, trgb) if a.wpix else lc), lm, lc
+    m = S[0].reshape(model.N, model.N)
+    lm = ms_loss(m, tgt)
+    L = lm + a.wpix * pix_loss(m, tgt) if a.wpix else lm
+    if not has_col(a): return L, lm, torch.zeros(())
+    R = model.render(S)
+    lc = ms_loss(R, trgb)
+    L = L + a.wcol * (lc + a.wpix * pix_loss(R, trgb) if a.wpix else lc)
+    return L, lm, lc
 
 
 def train(model, a, tgt, total, iters, say, name, quiet=False, ck=None):
-    trgb = load_target_rgb(a) if a.colour else None
+    trgb = load_target_rgb(a) if has_col(a) else None
     seedp = [p for n, p in model.named_parameters() if n.startswith("seed_") and p.requires_grad]
-    rest = [p for n, p in model.named_parameters() if not n.startswith("seed_") and p.requires_grad]
-    opt = torch.optim.Adam([{"params": rest, "lr": a.lr}, {"params": seedp, "lr": a.lr_seed * a.seed_speed}])
+    brk = [p for n, p in model.named_parameters() if n in ("wb", "bb") and p.requires_grad]
+    rest = [p for n, p in model.named_parameters() if not n.startswith("seed_") and n not in ("wb", "bb") and p.requires_grad]
+    groups = [{"params": rest, "lr": a.lr}, {"params": seedp, "lr": a.lr_seed * a.seed_speed}]
+    if brk: groups.append({"params": brk, "lr": a.lr_brake})
+    opt = torch.optim.Adam(groups)
     base_lr = [g["lr"] for g in opt.param_groups]
     best, best_state, it0, hist, lr_scale, best_it = 1e9, None, 0, [], 1.0, 0
     ckp = os.path.join(HERE, f"fca_gecko_{a.tag}.pt")
@@ -699,76 +875,102 @@ def train(model, a, tgt, total, iters, say, name, quiet=False, ck=None):
 
 
 def long_eval(model, a, tgt, total, steps=(96, 160, 300, 500)):
-    trgb = load_target_rgb(a) if a.colour else None
+    trgb = load_target_rgb(a) if has_col(a) else None
     with torch.no_grad():
         out, _, _ = model.run(total, max(steps), keep=set(steps), ckpt=False, full=True)
     r = {}
     for t in steps:
         L, lm, lc = frame_loss(model, out[t], tgt, trgb, a)
-        r[t] = (round(float(lm), 4), round(float(lc), 4)) if a.colour else round(float(lm), 4)
+        r[t] = (round(float(lm), 4), round(float(lc), 4)) if has_col(a) else round(float(lm), 4)
     return r
+
+
+def eval_score(r):
+    """one number from long_eval: mean over the steps of mass (+ colour) loss"""
+    v = [sum(x) if isinstance(x, tuple) else x for x in r.values()]
+    v = [x if math.isfinite(x) else 1e3 for x in v]
+    return sum(v) / len(v)
 
 
 def train_pool(model, a, tgt, total, iters, say, name, ck=None):
     """Growing NCA's sample pool. The pool holds whole states (mass, momentum, hidden, colour
-    AND the trail) and how many steps each has lived. Each iteration takes two at random; the
-    worse one (by its current loss) is replaced with a fresh seed. A seed runs until it is
-    grown (age t0..t1+hold) and is scored from t0 on, like the plain fit; a grown state runs a
-    segment of seg_min..seg_max steps and every score_every-th frame is scored. The gradient
-    goes back through that segment only, and the end states are written back to the pool."""
-    trgb = load_target_rgb(a) if a.colour else None
+    AND the trail) and how many steps each has lived. Each iteration takes `batch` at random;
+    the worst of them (by its current loss) goes back to the seed, and so does any older than
+    the age cap. A seed is grown to t0..t1+hold and scored every 8 steps from t0, like the plain
+    fit; a grown state runs on from where it was for seg_min..seg_max steps and is scored every
+    score_every frames. The gradient goes back through that run only; the end states are
+    written back. Curriculum: the age cap grows from t1+hold to max_age over age_ramp its.
+    Selection: the best params are the ones with the best long evaluation from the seed
+    (mean loss at 96, 160, 300, 500), not the best training loss, which mixes ages.
+    (The first version of this function forgot to pass the pool state to run(), so every
+    'pool' segment silently re-grew from the seed and was scored as a grown gecko.)"""
+    trgb = load_target_rgb(a) if has_col(a) else None
     seedp = [p for n, p in model.named_parameters() if n.startswith("seed_") and p.requires_grad]
-    rest = [p for n, p in model.named_parameters() if not n.startswith("seed_") and p.requires_grad]
-    opt = torch.optim.Adam([{"params": rest, "lr": a.lr}, {"params": seedp, "lr": a.lr_seed * a.seed_speed}])
+    brk = [p for n, p in model.named_parameters() if n in ("wb", "bb") and p.requires_grad]
+    rest = [p for n, p in model.named_parameters() if not n.startswith("seed_") and n not in ("wb", "bb") and p.requires_grad]
+    groups = [{"params": rest, "lr": a.lr}, {"params": seedp, "lr": a.lr_seed * a.seed_speed}]
+    if brk: groups.append({"params": brk, "lr": a.lr_brake})
+    opt = torch.optim.Adam(groups)
     base_lr = [g["lr"] for g in opt.param_groups]
     ckp = os.path.join(HERE, f"fca_gecko_{a.tag}.pt")
-    with torch.no_grad():
-        S0, T0 = model.init_state(total)
     pool = [None] * a.pool          # None = a fresh seed
     ages = [0] * a.pool
-    best, best_state, it0, hist, lr_scale, best_it = 1e9, None, 0, [], 1.0, 0
+    best, best_state, it0, hist, lr_scale, best_it, evals = 1e9, None, 0, [], 1.0, 0, []
     if ck is not None:
         opt.load_state_dict(ck["opt"]); best, best_state = ck["best"], ck["state"]
         it0, hist = ck["it"] + 1, ck.get("hist", [])
-        lr_scale, best_it = ck.get("lr_scale", 1.0), ck.get("best_it", ck["it"])
+        lr_scale, best_it, evals = ck.get("lr_scale", 1.0), ck.get("best_it", ck["it"]), ck.get("evals", [])
         if "pool" in ck: pool, ages = ck["pool"], ck["ages"]
         if "rng" in ck: torch.set_rng_state(ck["rng"])
     def checkpoint_now(it):
         save_ckpt(ckp, preset=name, state=best_state, cur={k: v.detach().clone() for k, v in model.state_dict().items()},
                   opt=opt.state_dict(), it=it, best=best, hist=hist, args=vars(a), rng=torch.get_rng_state(), kind="pool",
-                  lr_scale=lr_scale, best_it=best_it, pool=pool, ages=ages)
-    say(f"pool {a.pool}, segments {a.seg_min}..{a.seg_max}, scoring every {a.score_every} frames; before: {long_eval(model, a, tgt, total)}")
+                  lr_scale=lr_scale, best_it=best_it, pool=pool, ages=ages, evals=evals)
+    if ck is None:
+        r = long_eval(model, a, tgt, total); best = eval_score(r); best_it = 0
+        best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        evals.append((0, r))
+        say(f"pool {a.pool} x{a.batch}, segments {a.seg_min}..{a.seg_max}, score every {a.score_every}, "
+            f"age cap {a.t1 + a.hold}->{a.max_age} over {a.age_ramp} its; before: {r} score {best:.4f}")
+    cap = lambda it: int(a.t1 + a.hold + (a.max_age - a.t1 - a.hold) * min(1.0, it / max(a.age_ramp, 1)))
     t_start = t_ck = time.time(); it = it0 - 1
     for it in range(it0, iters):
         t = time.time()
         for g, b in zip(opt.param_groups, base_lr): g["lr"] = b * lr_factor(it, iters) * lr_scale
-        idx = torch.randperm(a.pool)[:2].tolist()
-        with torch.no_grad():   # the worse of the two goes back to the seed
-            cur = [float(frame_loss(model, pool[i][0], tgt, trgb, a)[0]) if pool[i] is not None and ages[i] >= a.t0 else 1e9 for i in idx]
+        if getattr(a, "spread_to", 0) > 0:   # forced anneal of the deposit box: spread -> spread_to over spread_anneal its
+            u = min(1.0, it / max(a.spread_anneal, 1)); sp = a.spread + (a.spread_to - a.spread) * u
+            with torch.no_grad(): model.raw["spread"].fill_(isp(max(sp - 1.0, 1e-6)))
+        idx = torch.randperm(a.pool)[:a.batch].tolist()
+        with torch.no_grad():   # the worst of the batch goes back to the seed, and anything past the age cap
+            cur = [float(frame_loss(model, pool[i][0], tgt, trgb, a)[0]) if pool[i] is not None else 1e9 for i in idx]
         worst = idx[int(np.argmax(cur))]
         pool[worst], ages[worst] = None, 0
+        for i in idx:
+            if ages[i] > cap(it): pool[i], ages[i] = None, 0
         opt.zero_grad(); info = []
         tot_loss, ok = 0.0, True
         for i in idx:
-            st = model.init_state(total) if pool[i] is None else (pool[i][0].clone(), pool[i][1].clone())   # a seed keeps its gradient to the seed values
             age = ages[i]
-            if age < a.t0: L = int(torch.randint(a.t0, a.t1 + a.hold + 1, (1,))) - age
-            else: L = int(torch.randint(a.seg_min, a.seg_max + 1, (1,)))
-            stride = 8 if age < a.t0 else a.score_every
-            keep = {k for k in range(1, L + 1) if age + k >= a.t0 and ((age + k) % stride == 0 or k == L)}
-            out, S, T = model.run(total, L, keep=keep, full=True)
+            if pool[i] is None:   # a seed keeps its gradient to the seed values
+                st, age = None, 0
+                L = int(torch.randint(a.t0, a.t1 + a.hold + 1, (1,)))
+                keep = {k for k in range(a.t0, L + 1) if k % 8 == 0 or k == L}
+            else:
+                st = (pool[i][0].clone(), pool[i][1].clone())
+                L = int(torch.randint(a.seg_min, a.seg_max + 1, (1,)))
+                keep = {k for k in range(1, L + 1) if k % a.score_every == 0 or k == L}
+            out, S, T = model.run(total, L, keep=keep, full=True, state=st)
             parts = [frame_loss(model, St, tgt, trgb, a) for St in out.values()]
             loss = sum(p[0] for p in parts) / len(parts)
             if not torch.isfinite(loss): ok = False; break
-            loss.backward()
+            (loss / len(idx)).backward()
             pool[i] = (S.detach(), T.detach()); ages[i] = age + L
             lm = float(sum(p[1] for p in parts) / len(parts)); lc = float(sum(p[2] for p in parts) / len(parts))
-            info.append(f"{'seed' if age == 0 else age}->{age + L}: {lm:.3f}" + (f"/{lc:.3f}" if a.colour else ""))
+            info.append(f"{'seed' if age == 0 else age}->{age + L}: {lm:.3f}" + (f"/{lc:.3f}" if has_col(a) else ""))
             tot_loss += float(loss) / len(idx)
         if not ok:
-            say(f"it {it}: non-finite loss, restoring best"); opt.zero_grad()
-            if best_state: model.load_state_dict(best_state)
-            pool = [None] * a.pool; ages = [0] * a.pool
+            say(f"it {it}: non-finite loss, back to best, pool reset"); opt.zero_grad()
+            model.load_state_dict(best_state); pool = [None] * a.pool; ages = [0] * a.pool
             continue
         gn = 0.0
         for g in opt.param_groups:
@@ -779,22 +981,24 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
                 if nrm > 0: p.grad /= (nrm + 1e-12) / a.clip
         opt.step()
         hist.append(tot_loss)
-        ema = sum(hist[-40:]) / len(hist[-40:])
-        if ema < best and it > 20:
-            best = ema; best_it = it; best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
-        if a.rollback and best_state is not None and it - best_it > 40 and ema > best * a.rollback:
-            model.load_state_dict(best_state); opt.state.clear(); lr_scale *= 0.5; best_it = it
-            pool = [None] * a.pool; ages = [0] * a.pool
-            say(f"it {it}: ema {ema:.4f} > {a.rollback} x best {best:.4f}, back to best, lr x{lr_scale:.3g}, pool reset")
         if it % 10 == 0 or it == iters - 1:
-            extra = f" hue {float(model.hue_sens):.3f}+{float(model.hue_off):.3f} br {float(model.cbright):.2f}" if a.colour else ""
-            say(f"it {it:5d} loss {tot_loss:.4f} ema {ema:.4f} best {best:.4f} [{'; '.join(info)}] gn {gn:.1e} "
-                f"maxage {max(ages)} {time.time() - t:.1f}s/it{extra}")
+            say(f"it {it:5d} loss {tot_loss:.4f} [{'; '.join(info)}] gn {gn:.1e} maxage {max(ages)} cap {cap(it)} "
+                f"lr {opt.param_groups[0]['lr']:.2e} {time.time() - t:.1f}s/it")
+        if it % a.eval_every == 0 and it > 0:
+            r = long_eval(model, a, tgt, total); sc = eval_score(r); evals.append((it, r))
+            tag = ""
+            annealing = getattr(a, "spread_to", 0) > 0 and it < a.spread_anneal   # only states at the final spread can be best
+            if annealing: tag = " (annealing spread)"
+            elif sc < best or (getattr(a, "spread_to", 0) > 0 and best_it < a.spread_anneal):
+                best, best_it = sc, it; best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}; tag = " NEW BEST"
+            elif a.rollback and it - best_it > 4 * a.eval_every and sc > best * a.rollback:
+                model.load_state_dict(best_state); opt.state.clear(); lr_scale *= 0.5; best_it = it
+                pool = [None] * a.pool; ages = [0] * a.pool
+                tag = f" -> back to best, lr x{lr_scale:.3g}, pool reset"
+            say(f"eval it {it}: {r} score {sc:.4f} (best {best:.4f} at {best_it}){tag}")
         if time.time() - t_ck > a.ckpt_min * 60:
             checkpoint_now(it); t_ck = time.time()
-        if it % a.eval_every == 0 and it > 0:
-            say(f"eval it {it} (current params, from the seed): {long_eval(model, a, tgt, total)}")
-        if it % 100 == 0 and best_state is not None:
+        if it % 100 == 0 and it > it0 and best_state is not None:
             cur_s = {k: v.clone() for k, v in model.state_dict().items()}
             finish(model, a, tgt, total, say, name, best, best_state, it + 1); model.load_state_dict(cur_s)
         if a.hours and time.time() - t_start > a.hours * 3600:

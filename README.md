@@ -109,7 +109,11 @@ The snapshots are at world size 0.05, after 300 steps. At the page's default siz
 
 The loss is multiscale MSE scaled so that predicting nothing scores 1.0. For comparison, the best possible radially symmetric shape scores 0.45 and a gecko blurred by 8 pixels scores 0.13. None of the runs grows toes, eyes or spots.
 
-![growth](train/fca_gecko_hidden6_grow.gif)
+![growth](train/fca_gecko_best_colour.gif)
+
+**Latest: stable and in colour.** Sample-pool training (one-cell move, a pixel-level loss term) makes the shape hold. The mass loss at steps 96, 160, 300 and 500 is now 0.083, 0.090, 0.108 and 0.131, against 0.100, 0.135, 0.191 and 0.238 before. Colour is learned as three channels carried along with the mass, trained on top of those dynamics, with a colour loss of 0.07 throughout. The gecko is green with a yellow belly and dark eyes. It doesn't yet have the red spots, toes or crisp edges.
+
+A sub-pixel version (the simulation at 2× resolution, scored on 2×2 averages) didn't work when warm-started: the dynamics don't survive the change of scale. It would need training from scratch at about 4× the compute.
 
 **What draws the gecko.** Neither the brain nor the learned launch velocity does it alone:
 - The launch velocity alone smears into a blob (loss 0.52).
@@ -119,7 +123,7 @@ The rule is symmetric, so a symmetric seed can never give the animal a front: th
 
 ![ablation](train/fca_gecko_hidden6_ablate.png)
 
-Colour (training the hue the page already has, the forward-force channel) and the Growing NCA sample pool, meant to keep the shape stable for longer, are flags of the script (`--colour`, `--pool`). Their first runs are still going. So far the pool is making long-horizon stability worse, not better.
+The scripts in `train/`: `fluoddity_ca_gecko.py` (the model and its training: pool, zoom, colour flags), `fca_gecko_paint.py` (carried colour on top of fixed dynamics), `fca_gecko_gif_loss.py` (growth GIFs with the loss plotted live).
 
 ## Files
 

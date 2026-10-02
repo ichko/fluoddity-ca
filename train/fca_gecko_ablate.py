@@ -24,7 +24,7 @@ STEPS = (48, 64, 80, 96)
 def build(tag):
     ck = torch.load(os.path.join(HERE, f"fca_gecko_{tag}.pt"), weights_only=False)
     a = argparse.Namespace(**ck["args"])
-    for k, v in dict(colour=False, pool=0, wcol=0.5, hue_sens=None, hue_off=0.33, train_hue_off=1, seg_min=32, seg_max=64, score_every=4, eval_every=50, learn_seed_h=1, seed_lowres=0, rollback=0, ckpt_min=10, opt="grad").items():
+    for k, v in dict(press_mode=0, lr_brake=2e-2, paint=-1, paint_w=64, freeze_dyn=False, rgb=False, brake=False, brake_init=5.0, wpix=0.0, batch=2, max_age=600, age_ramp=200, colour=False, pool=0, wcol=0.5, hue_sens=None, hue_off=0.33, train_hue_off=1, seg_min=32, seg_max=64, score_every=4, eval_every=50, learn_seed_h=1, seed_lowres=0, rollback=0, ckpt_min=10, opt="grad").items():
         if not hasattr(a, k): setattr(a, k, v)
     pre = {p["name"]: p for p in f.load_presets()}
     m = f.FCA(a, pre[ck["preset"]]); m.load_state_dict(ck["state"]); m.eval()
