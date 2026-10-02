@@ -77,6 +77,14 @@ The original Fluoddity has neither of these. Both are in `fluoddity-ca-next.html
 
   ![pressure](img/ca_pressure.png)
 
+### A family of its own
+
+A novelty search over the CA's settings found 24 new presets. It started from Fluoddity's presets with random spread, pressure, rest and brain choice, then mutated them slowly: a few settings at a time, small nudges to the 80 brain numbers. Each candidate was scored on 13 measurements (how much of the grid is occupied, how clumped the mass is, structure size, how stringy it is, how much it moves, hue spread, blob count and so on). Dead, static, uniform and exploding runs were thrown out, and parents were chosen for novelty × quality. In all it evaluated 194 candidates in about 4 hours. They are the **CA family** dropdown in `fluoddity-ca-next.html`; the search scripts are in `tools/search/`.
+
+![CA family](img/ca_family.png)
+
+The snapshots are at world size 0.05, after 300 steps. At the page's default size the rings and blobs may come out at a different scale.
+
 ### Measurements
 
 - **How far mass moves.** Measured per step over 300 steps, in 12 presets so far. The median is 0.2–1.6 cells, and the 99th percentile is 0.3–6 cells in 9 of them. The fast ones are Growth (10 cells), Dandelions (18 cells, median 3.1) and Curls (6 cells). So a fixed neighbourhood of about 17×17 makes this a strict CA for most presets, but not all.

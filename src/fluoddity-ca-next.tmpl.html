@@ -67,6 +67,7 @@ body.hidep #toggle{display:block}
     <div class="grp">
       <h2>Preset</h2>
       <select id="preset"></select>
+      <label class="sel" style="margin-top:6px"><span>CA family</span><select id="ca-preset"><option value="">—</option></select></label>
       <div class="btns">
         <button id="b-reset" type="button" title="R">reset</button>
         <button id="b-mutate" type="button" title="M">new mutations</button>
@@ -84,6 +85,7 @@ body.hidep #toggle{display:block}
 
 <script>
 /*PRESETS*/
+/*CA_PRESETS*/
 </script>
 <script>
 "use strict";
@@ -521,7 +523,9 @@ function loadPreset(c){
   baseRule = Float32Array.from(c.rule);
   S.color_by_cohort = false;   // one brain = one cohort, so colour by the brain's force instead
   history.length = 0; history.push({rule: baseRule.slice(), seed: S.rule_seed});
-  look.brain = Math.min(look.brain, S.num_cohorts - 1);
+  // CA-family presets carry their own grid knobs; Fluoddity presets get the defaults
+  look.spread = c.spread ?? 2; look.pressure = c.pressure ?? 0; look.rest = c.rest ?? 1;
+  look.brain = Math.max(0, Math.min(Math.round(c.brain ?? 0), S.num_cohorts - 1));
   syncUI(); rulesDirty = true; frame = 0;
 }
 
@@ -760,7 +764,10 @@ for(const g of ["Core", "Advanced"]){
   PRESETS.forEach((c, i) => { if(c.group === g){ const o = document.createElement("option"); o.value = i; o.textContent = c.name; og.appendChild(o); } });
   sel.appendChild(og);
 }
-sel.addEventListener("change", () => loadPreset(PRESETS[+sel.value]));
+const caSel = $("ca-preset");
+CA_PRESETS.forEach((c, i) => { const o = document.createElement("option"); o.value = i; o.textContent = c.name; caSel.appendChild(o); });
+sel.addEventListener("change", () => { caSel.value = ""; loadPreset(PRESETS[+sel.value]); });
+caSel.addEventListener("change", () => { if(caSel.value === "") return; sel.selectedIndex = -1; loadPreset(CA_PRESETS[+caSel.value]); });
 
 let flashMsg = "", flashT = 0;
 function flash(m){ flashMsg = m; flashT = performance.now(); }
@@ -818,7 +825,8 @@ function loop(t){
   requestAnimationFrame(loop);
 }
 window.__fl = { get frame(){ return frame; }, step: n => { for(let i=0;i<n;i++) physicsStep(); }, frameTick, presets: PRESETS,
-  load: name => { const i = PRESETS.findIndex(c => c.name === name); sel.value = i; loadPreset(PRESETS[i]); }, look, S, world: ws => { buildWorld(ws); frame = 0; },
+  load: name => { const i = PRESETS.findIndex(c => c.name === name); sel.value = i; caSel.value = ""; loadPreset(PRESETS[i]); },
+  caPresets: CA_PRESETS, loadCA: name => { const i = CA_PRESETS.findIndex(c => c.name === name); caSel.value = i; sel.selectedIndex = -1; loadPreset(CA_PRESETS[i]); }, look, S, world: ws => { buildWorld(ws); frame = 0; },
   snap: () => { frameTick(); return cv.toDataURL('image/png'); }, mass: () => { measureMass(); return [W.mass, W.occ]; }, jumps: measureJumps };
 if(!new URLSearchParams(location.search).has("manual")) requestAnimationFrame(loop);
 </script>
