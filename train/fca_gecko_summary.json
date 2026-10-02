@@ -1,0 +1,56 @@
+{
+ "faithful": {
+  "loss_fit": 0.1748,
+  "loss_at": {
+   "16": 1.1854,
+   "32": 0.633,
+   "48": 0.2441,
+   "64": 0.1478,
+   "80": 0.148,
+   "96": 0.1592,
+   "128": 0.1837,
+   "160": 0.2042
+  },
+  "train_best_ema": 0.1628023326396942,
+  "iterations": 1200,
+  "trainable": 1550,
+  "preset": "Worms",
+  "mass_drift": -4.245939094427165e-06,
+  "flags": {
+   "see_mass": false,
+   "centres": 10,
+   "hidden": 0,
+   "seed_lowres": null,
+   "init_from": "",
+   "gdamp": 1.0,
+   "lr": 0.001
+  }
+ },
+ "see_mass": {
+  "loss_fit": 0.1386,
+  "loss_at": {
+   "16": 1.0185,
+   "32": 0.5525,
+   "48": 0.1676,
+   "64": 0.1339,
+   "80": 0.1253,
+   "96": 0.1276,
+   "128": 0.1413,
+   "160": 0.156
+  },
+  "train_best_ema": 0.1327850788831711,
+  "iterations": 900,
+  "trainable": 1581,
+  "preset": "Worms",
+  "mass_drift": 1.9665402121615827e-05,
+  "flags": {
+   "see_mass": true,
+   "centres": 10,
+   "hidden": 0,
+   "seed_lowres": null,
+   "init_from": "fca_gecko_faithful.pt",
+   "gdamp": 1.0,
+   "lr": 0.001
+  }
+ }
+}

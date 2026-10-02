@@ -1,0 +1,32 @@
+{
+ "faithful": {
+  "full": 0.1748,
+  "nobrain": 0.4977,
+  "noseed": 0.5751,
+  "neither": 0.5297
+ },
+ "see_mass": {
+  "full": 0.1386,
+  "nobrain": 0.5138,
+  "noseed": 0.6825,
+  "neither": 0.5413
+ },
+ "hidden6": {
+  "full": 0.1023,
+  "nobrain": 0.5251,
+  "noseed": 0.6368,
+  "neither": 0.5503
+ },
+ "seedlow3": {
+  "full": 0.1602,
+  "nobrain": 0.5202,
+  "noseed": 0.6438,
+  "neither": 0.5515
+ },
+ "faithful_cont": {
+  "full": 0.138,
+  "nobrain": 0.511,
+  "noseed": 0.6077,
+  "neither": 0.5363
+ }
+}

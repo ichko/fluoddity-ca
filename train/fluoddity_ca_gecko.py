@@ -64,7 +64,8 @@ def bake_rule(rule, seed, mut, cohort=0):
     sd = f32(f32(seed) + f32(cohort))
     if np.all(fr[0] == 0) and np.all(am[5] == 0):
         for i in range(10):
-            fs = f32(1 + 2 * _hash(sd, i * 8) ** 2)
+            hv = _hash(sd, i * 8)   # GLSL pow(x, 2.0) is exp2(2*log2(x)), and its rounding reaches the mutation hash
+            fs = f32(f32(1) + f32(2) * np.exp2(f32(2) * np.log2(hv, dtype=np.float32), dtype=np.float32))
             fr[i] = [(_hash(sd, i * 8 + k) * 2 - 1) * fs for k in range(4)]
             am[i] = [_hash(sd, i * 8 + 4 + k) * 2 - 1 for k in range(4)]
     co = fr[4][:2] + am[7][[1, 0]] + fr[1][2:]
@@ -80,6 +81,17 @@ def bake_rule(rule, seed, mut, cohort=0):
 
 
 # ---------------------------------------------------------------- the step
+class _Damp(torch.autograd.Function):
+    """identity forward; the gradient flowing back through one step is scaled by g. The
+    step is chaotic (backward growth ~1.5x a step), so an undamped unroll is all noise."""
+    @staticmethod
+    def forward(ctx, x, g):
+        ctx.g = g; return x.view_as(x)
+    @staticmethod
+    def backward(ctx, gr):
+        return gr * ctx.g, None
+
+
 def isp(y):  # inverse softplus
     return math.log(math.expm1(max(y, 1e-6)))
 
@@ -107,7 +119,8 @@ class FCA(nn.Module):
             fs = 1 + 2 * torch.rand(nC - 10, 1, generator=g) ** 2
             freq[10:, :4] = (torch.rand(nC - 10, 4, generator=g) * 2 - 1) * fs
             amp[10:] = (torch.rand(nC - 10, 4, generator=g) * 2 - 1) * a.extra_amp
-            amp[10:, 3] = torch.rand(nC - 10, generator=g) * 2 - 1     # .w is also a phase
+            # .w is also the strafe amplitude, so it starts as quiet as the rest: a warm start
+            # from ten centres then begins where it left off
         if self.din > 4:  # extra inputs start with small random frequencies so they are heard at all
             freq[:, 4:] = torch.randn(nC, self.din - 4, generator=g) * a.extra_freq
         self.freq = nn.Parameter(freq)
@@ -135,18 +148,22 @@ class FCA(nn.Module):
         })
         if not a.train_spread: self.raw["spread"].requires_grad_(False)
         if not a.train_pressure: self.raw["press"].requires_grad_(False)
+        if a.colour:
+            self.hue_sens = nn.Parameter(torch.tensor(float(a.hue_sens if a.hue_sens is not None else preset.get("hue_sensitivity", 0.0))))
+            self.hue_off = nn.Parameter(torch.tensor(float(a.hue_off)))   # NOT on the page: hue = sens*col + off
+            if not a.train_hue_off: self.hue_off.requires_grad_(False)
+            self.cbright = nn.Parameter(torch.tensor(0.7))                # the page's brightness slider
         self.sym = not preset.get("disable_symmetry", False)
         self.absori = a.absori if a.absori >= 0 else int(preset.get("absolute_orientation", 0))
         self.orimix = float(preset.get("orientation_mix", 1.0))
         # the seed: a disc of mass, with a learnable velocity field (and hidden values) over it
         n = self.N; c = (n - 1) / 2.0
         yy, xx = torch.meshgrid(torch.arange(n, dtype=torch.float32), torch.arange(n, dtype=torch.float32), indexing="ij")
-        self.register_buffer("yy", yy); self.register_buffer("xx", xx)
+        self.register_buffer("yy", yy.contiguous(), persistent=False); self.register_buffer("xx", xx.contiguous(), persistent=False)
         r = torch.sqrt((xx - c) ** 2 + (yy - c) ** 2)
         disc = (a.seed_r + 0.5 - r).clamp(0, 1)
-        self.register_buffer("disc", disc)
-        self.register_buffer("pos", torch.stack([(xx + 0.5) / n * 2 - 1, (yy + 0.5) / n * 2 - 1]))
-        self.register_buffer("xf", xx.reshape(-1).clone()); self.register_buffer("yf", yy.reshape(-1).clone())
+        self.register_buffer("disc", disc, persistent=False)
+        self.register_buffer("xf", xx.reshape(-1).clone(), persistent=False); self.register_buffer("yf", yy.reshape(-1).clone(), persistent=False)
         self.nt = int(math.ceil(a.max_spread)) + 1
         R0 = int(math.ceil(a.seed_r)) + 1
         self.s0, self.s1 = int(c - R0 + 0.5), int(c + R0 + 1.5)
@@ -162,9 +179,19 @@ class FCA(nn.Module):
         else:
             sv = sv + torch.randn(2, S, S, generator=g) * 1e-5
         self.seed_v = nn.Parameter(sv)
-        if not a.learn_seed_v: self.seed_v.requires_grad_(False)
+        if not a.learn_seed_v or a.seed_lowres: self.seed_v.requires_grad_(False)
+        if a.seed_lowres:   # a seed hint of only 2*K*K numbers: a coarse velocity correction, upsampled
+            self.seed_c = nn.Parameter(torch.zeros(2, a.seed_lowres, a.seed_lowres))
         if Hd:
             self.seed_h = nn.Parameter(torch.randn(Hd, S, S, generator=g) * 0.3)
+            if not a.learn_seed_h:   # hidden values start at zero everywhere: no layout hidden in the seed
+                with torch.no_grad(): self.seed_h.zero_()
+                self.seed_h.requires_grad_(False)
+
+    def seed_vel(self):
+        if not self.a.seed_lowres: return self.seed_v
+        S = self.seed_v.shape[-1]
+        return self.seed_v + F.interpolate(self.seed_c[None], size=(S, S), mode="bilinear", align_corners=True)[0]
 
     # ---- params in the page's units
     def P(self):
@@ -179,11 +206,13 @@ class FCA(nn.Module):
         n = self.N
         m = self.disc * (total_mass / self.disc.sum())
         v = torch.zeros(2, n, n)
-        v = F.pad(self.seed_v, (self.s0, n - self.s1, self.s0, n - self.s1))
+        v = F.pad(self.seed_vel(), (self.s0, n - self.s1, self.s0, n - self.s1))
         st = [m, m * v[0], m * v[1]]
         if self.a.hidden:
             h = torch.tanh(F.pad(self.seed_h, (self.s0, n - self.s1, self.s0, n - self.s1)))
             st += [m * h[k] for k in range(self.a.hidden)]
+        if self.a.colour:
+            st += [torch.zeros_like(m)]   # the page's col, mass-weighted; nothing has a colour yet
         return torch.stack(st).reshape(len(st), -1), torch.zeros(2, n * n)
 
     def sample(self, Fm, px, py):
@@ -240,7 +269,7 @@ class FCA(nn.Module):
         cells = n / 2.0
         fields = [T]
         if a.see_mass: fields.append(m[None])
-        if Hd: fields.append(S[3:])
+        if Hd: fields.append(S[3:3 + Hd])
         Fm = torch.cat(fields) if len(fields) > 1 else T
         EL = self.sample(Fm, xa + lo[0] * cells, ya + lo[1] * cells)
         ER = self.sample(Fm, xa + ro[0] * cells, ya + ro[1] * cells)
@@ -256,7 +285,7 @@ class FCA(nn.Module):
             mo = ma[None] * self.mgain
             ins_b += [Lm, Rm, mo]; ins_m += [Rm, Lm, mo]; k += 1
         if Hd:
-            h = Sa[3:] / ma
+            h = Sa[3:3 + Hd] / ma
             Lh, Rh = EL[k:] * self.hgain, ER[k:] * self.hgain
             ins_b += [h, Lh, Rh]; ins_m += [h, Rh, Lh]
         fb = self.fourier_feats(torch.cat(ins_b))
@@ -289,6 +318,8 @@ class FCA(nn.Module):
             dh = torch.einsum("kcf,cfa->ka", self.wh, feats) + self.bh[:, None]
             hn = torch.tanh(h + dh)
             Q = Q + [ma * hn[i] for i in range(Hd)]
+        if a.colour:   # FS_BRAIN: col = base.x + mir.x, carried with the mass through the move
+            Q = Q + [ma * (base[0] + mir[0])]
         S2 = self.move(torch.stack(Q), xa + disp[0], ya + disp[1], P["spread"], S.shape[1])
         # trail: blur, fade, take the momentum
         p = P["persist"]; d = P["diff"] ** 2
@@ -306,24 +337,39 @@ class FCA(nn.Module):
         h = s / 2
         def taps(q):
             c0 = torch.floor(q - h + 0.5).detach()
-            c = c0[None] + torch.arange(nt, dtype=torch.float32)[:, None]
-            w = (torch.minimum(q + h, c + 0.5) - torch.maximum(q - h, c - 0.5)).clamp_min(0) / s
-            return c.long() % n, w
-        cx, wx = taps(qx); cy, wy = taps(qy)
+            u = q - c0                                  # local coordinates keep the overlaps exact
+            k = torch.arange(nt, dtype=torch.float32)[:, None]
+            w = (torch.minimum(u + h, k + 0.5) - torch.maximum(u - h, k - 0.5)).clamp_min(0)
+            w = w / w.sum(0, keepdim=True)              # each source hands on exactly what it has
+            return (c0.long()[None] + k.long()) % n, w
+        cx, wx = taps(torch.remainder(qx, n)); cy, wy = taps(torch.remainder(qy, n))   # on the torus, so far jumps keep their precision
         tgt = (cy[:, None] * n + cx[None]).reshape(-1)
         w = (wy[:, None] * wx[None]).reshape(-1)
         vals = (Q[:, None] * w.reshape(nt * nt, -1)[None]).reshape(Q.shape[0], -1)
         return torch.zeros(Q.shape[0], size).index_add(1, tgt, vals)
 
-    def run(self, total_mass, steps, keep=(), ckpt=True):
-        S, T = self.init_state(total_mass)
+    def render(self, S):
+        """FS_CELLS: hsv(sens*col/m + off, 0.8, 1) * m (times a brightness), [3, n, n]"""
+        n = self.N
+        m = S[0].reshape(n, n)
+        col = (S[-1].reshape(n, n) / m.clamp_min(1e-12)) * (m > 1e-12)
+        hue = self.hue_sens * col + self.hue_off
+        K = torch.tensor([1.0, 2.0 / 3.0, 1.0 / 3.0])[:, None, None]
+        p = (torch.frac(torch.remainder(hue[None] + K, 1.0)) * 6.0 - 3.0).abs()
+        rgb = 1.0 + 0.8 * ((p - 1.0).clamp(0, 1) - 1.0)
+        return rgb * m[None] * self.cbright
+
+    def run(self, total_mass, steps, keep=(), ckpt=True, state=None, full=False):
+        """keep: steps whose mass (or, with full, whole state) is returned. state: (S, T) to start from."""
+        S, T = self.init_state(total_mass) if state is None else state
         out = {}
         for t in range(1, steps + 1):
             if ckpt and torch.is_grad_enabled():
                 S, T = checkpoint(self.step, S, T, use_reentrant=False)
+                if self.a.gdamp < 1: S, T = _Damp.apply(S, self.a.gdamp), _Damp.apply(T, self.a.gdamp)
             else:
                 S, T = self.step(S, T)
-            if t in keep: out[t] = S[0].reshape(self.N, self.N)
+            if t in keep: out[t] = S if full else S[0].reshape(self.N, self.N)
         return out, S, T
 
 
@@ -342,13 +388,32 @@ def load_target(a):
     return torch.tensor(t)
 
 
+def load_target_rgb(a):
+    """gecko.png's RGB premultiplied by alpha, placed like the mass target: [3, n, n]"""
+    from PIL import Image
+    im = np.asarray(Image.open(os.path.join(HERE, "gecko.png")).convert("RGBA")).astype(np.float32) / 255
+    rgb = (im[..., :3] * im[..., 3:4])[::-1].copy()
+    n, h = a.grid, rgb.shape[0]
+    t = np.zeros((3, n, n), np.float32)
+    o = (n - h) // 2
+    t[:, o:o + h, o:o + rgb.shape[1]] = rgb.transpose(2, 0, 1) * a.mass_scale
+    return torch.tensor(t)
+
+
 def ms_loss(m, tgt, scales=(1, 2, 4, 8)):
+    """multiscale MSE over the target's power; m, tgt [n, n] or [C, n, n]"""
+    if m.dim() == 2: m, tgt = m[None], tgt[None]
     L = 0
     for s in scales:
-        a = F.avg_pool2d(m[None, None], s) if s > 1 else m[None, None]
-        b = F.avg_pool2d(tgt[None, None], s) if s > 1 else tgt[None, None]
+        a = F.avg_pool2d(m[None], s) if s > 1 else m[None]
+        b = F.avg_pool2d(tgt[None], s) if s > 1 else tgt[None]
         L = L + ((a - b) ** 2).mean() / (b ** 2).mean()
     return L / len(scales)
+
+
+def to_rgb_img(rgb, vmax):
+    x = (rgb.detach().numpy()[:, ::-1] / vmax).clip(0, 1)
+    return (x.transpose(1, 2, 0) * 255).astype(np.uint8)
 
 
 def to_img(m, vmax):
@@ -363,22 +428,30 @@ def save_pictures(model, tgt, total, a, tag):
     n = a.grid; c0 = (n - 160) // 2
     crop = lambda img: img[c0:c0 + 160, c0:c0 + 160]
     T1 = a.t1
-    steps = sorted(set([0, 8, 16, 24, 32, 48, a.t0, T1, T1 + 16, T1 + 48, 2 * T1]))
+    steps = sorted(set([0, 8, 16, 24, 32, 48, a.t0, T1, T1 + 16, T1 + 48, 2 * T1] + ([300, 500] if a.pool else [])))
     with torch.no_grad():
-        S0, _ = model.init_state(total)
-        S0 = S0.reshape(-1, a.grid, a.grid)
-        out, _, _ = model.run(total, max(steps), keep=set(steps), ckpt=False)
-    out[0] = S0[0]
+        S0, T0 = model.init_state(total)
+        out, _, _ = model.run(total, max(steps), keep=set(steps), ckpt=False, full=True)
+    out[0] = S0
     vmax = float(tgt.max()) * 1.2
-    tiles = [("target", crop(to_img(tgt, vmax)))] + [(f"t={s}", crop(to_img(out[s], vmax))) for s in steps]
+    if a.colour:
+        trgb = load_target_rgb(a)
+        cv = float(trgb.max()) * 1.2
+        show = lambda S: to_rgb_img(model.render(S), cv)
+        tshow = to_rgb_img(trgb, cv)
+    else:
+        show = lambda S: to_img(S[0].reshape(n, n), vmax)
+        tshow = to_img(tgt, vmax)
+    out = {k: show(v) for k, v in out.items()}
+    tiles = [("target", crop(tshow))] + [(f"t={s}", crop(out[s])) for s in steps]
     W = 160 * len(tiles)
     sheet = Image.new("RGB", (W, 178), (10, 12, 14)); d = ImageDraw.Draw(sheet)
     for i, (lab, im) in enumerate(tiles):
         sheet.paste(Image.fromarray(im), (160 * i, 18)); d.text((160 * i + 4, 3), lab, fill=(220, 220, 220))
     p1 = os.path.join(HERE, f"fca_gecko_{tag}_strip.png"); sheet.save(p1)
     big = Image.new("RGB", (512 * 2 + 8, 530), (10, 12, 14)); d = ImageDraw.Draw(big)
-    big.paste(Image.fromarray(crop(to_img(tgt, vmax))).resize((512, 512), Image.NEAREST), (0, 18))
-    big.paste(Image.fromarray(crop(to_img(out[T1], vmax))).resize((512, 512), Image.NEAREST), (520, 18))
+    big.paste(Image.fromarray(crop(tshow)).resize((512, 512), Image.NEAREST), (0, 18))
+    big.paste(Image.fromarray(crop(out[T1])).resize((512, 512), Image.NEAREST), (520, 18))
     d.text((4, 3), "target", fill=(220, 220, 220)); d.text((524, 3), f"{tag}: grown, t={T1}", fill=(220, 220, 220))
     p2 = os.path.join(HERE, f"fca_gecko_{tag}_vs.png"); big.save(p2)
     return p1, p2
@@ -387,11 +460,12 @@ def save_pictures(model, tgt, total, a, tag):
 def save_params(model, path, extra):
     P = {k: float(v) for k, v in model.P().items()}
     d = dict(extra, phys=P, freq=model.freq.detach().tolist(), amp=model.amp.detach().tolist(),
-             seed_v=model.seed_v.detach().tolist(), sym=model.sym, absori=model.absori, orimix=model.orimix)
+             seed_v=model.seed_vel().detach().tolist(), sym=model.sym, absori=model.absori, orimix=model.orimix)
     if model.a.hidden:
         d.update(wh=model.wh.detach().tolist(), bh=model.bh.detach().tolist(), hgain=float(model.hgain),
                  seed_h=model.seed_h.detach().tolist())
     if model.a.see_mass: d["mgain"] = float(model.mgain)
+    if model.a.colour: d.update(hue_sensitivity=float(model.hue_sens), hue_offset=float(model.hue_off), brightness=float(model.cbright))
     # the page's 80 numbers, when the brain is the page's brain
     if model.freq.shape == (10, 4):
         d["rule80"] = torch.cat([model.freq, model.amp], 1).reshape(-1).tolist()
@@ -423,20 +497,42 @@ def main():
     ap.add_argument("--seed_vel", default="radial", choices=["radial", "rand", "zero"])
     ap.add_argument("--seed_speed", type=float, default=0.002)
     ap.add_argument("--learn_seed_v", type=int, default=1)
-    ap.add_argument("--ori_eps", type=float, default=1e-3, help="world units; 0 = exact gradient")
+    ap.add_argument("--learn_seed_h", type=int, default=1, help="0: seed hidden values fixed at zero")
+    ap.add_argument("--seed_lowres", type=int, default=0, help="K>0: seed velocity = default + a learned KxK correction, upsampled (2K^2 numbers in place of the full field)")
+    ap.add_argument("--ori_eps", type=float, default=1e-2, help="world units; 0 = exact gradient")
+    ap.add_argument("--gdamp", type=float, default=1.0, help="backward gain through each step (0.7 measured: worse than a random direction; 1.0 = exact, descends)")
     ap.add_argument("--luma", action="store_true")
     ap.add_argument("--mass_scale", type=float, default=1.0)
     ap.add_argument("--t0", type=int, default=48)
     ap.add_argument("--t1", type=int, default=80)
     ap.add_argument("--hold", type=int, default=16, help="also score this many steps past the end")
     ap.add_argument("--iters", type=int, default=600)
-    ap.add_argument("--lr", type=float, default=3e-3)
+    ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--lr_seed", type=float, default=1e-2)
     ap.add_argument("--clip", type=float, default=1.0)
     ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--resume", default="")
+    ap.add_argument("--init_from", default="", help="checkpoint of another variant to start from")
     ap.add_argument("--hours", type=float, default=0, help="stop after this long (0 = iters only)")
+    ap.add_argument("--colour", action="store_true", help="carry the page's col channel; train hue_sensitivity on the RGB target")
+    ap.add_argument("--wcol", type=float, default=0.5, help="weight of the colour loss against the mass loss")
+    ap.add_argument("--hue_sens", type=float, default=None, help="initial hue_sensitivity (default: the preset's)")
+    ap.add_argument("--hue_off", type=float, default=0.33, help="initial hue offset (not on the page; 0.33 = green)")
+    ap.add_argument("--train_hue_off", type=int, default=1)
+    ap.add_argument("--pool", type=int, default=0, help="sample pool size (Growing NCA); 0 = train from the seed only")
+    ap.add_argument("--seg_min", type=int, default=32)
+    ap.add_argument("--seg_max", type=int, default=64)
+    ap.add_argument("--score_every", type=int, default=4, help="pool training scores every this many frames once grown")
+    ap.add_argument("--eval_every", type=int, default=50, help="pool training: long evaluation from the seed every N its")
+    ap.add_argument("--rollback", type=float, default=1.25, help="if the running loss passes this x best, reload best and halve lr (0 = off)")
+    ap.add_argument("--ckpt_min", type=float, default=10.0, help="save params+optimizer+iteration every this many minutes")
+    ap.add_argument("--opt", default="grad", choices=["grad", "es"],
+                    help="grad: backprop through the damped unroll; es: antithetic evolution strategy (no gradient)")
+    ap.add_argument("--es_pop", type=int, default=12, help="antithetic pairs per ES generation")
+    ap.add_argument("--es_sigma", type=float, default=0.03, help="ES perturbation, relative to each tensor's scale")
+    ap.add_argument("--es_lr", type=float, default=0.02, help="ES Adam step, in the same relative units")
+    ap.add_argument("--es_seed", type=int, default=1, help="ES also perturbs the seed velocity (and seed hidden)")
     a = ap.parse_args()
     torch.set_num_threads(a.threads)
     torch.manual_seed(a.seed)
@@ -455,11 +551,18 @@ def main():
             bad = any(not math.isfinite(v) for v in vals)
             return 1e9 if bad else sum(vals) / len(vals)
 
+    ck_resume = None
+    if a.resume == "auto":   # restart-proof: continue our own checkpoint if there is one
+        p = os.path.join(HERE, f"fca_gecko_{a.tag}.pt")
+        a.resume = p if os.path.exists(p) else ""
     if a.resume:
-        ck = torch.load(a.resume)
-        model = FCA(a, presets[ck["preset"]]); model.load_state_dict(ck["state"]); start = ck["preset"]
+        ck = torch.load(a.resume, weights_only=False)
+        model = FCA(a, presets[ck["preset"]]); model.load_state_dict(ck.get("cur", ck["state"])); start = ck["preset"]
+        if "cur" in ck: ck_resume = ck
+        say(f"resumed {a.resume} at it {ck.get('it', '?')} best {ck.get('best')}")
     else:
         names = list(presets) if a.preset == "auto" else a.preset.split(",")
+        if a.init_from: names = names[:1]   # the warm start decides the preset; no screening
         if len(names) > 1:
             res = []
             for nm in names:
@@ -476,58 +579,306 @@ def main():
                 res2.sort(); names = [res2[0][1]]
         start = names[0]
         model = FCA(a, presets[start])
+    if a.init_from and not ck_resume:   # warm start from another variant: same tensors copied, bigger ones filled in the corner
+        ck = torch.load(a.init_from, weights_only=False); src = ck["state"]
+        if not a.resume:
+            start = ck["preset"]; model = FCA(a, presets[start])
+        own = model.state_dict()
+        with torch.no_grad():
+            for k, v in src.items():
+                if k not in own: continue
+                if own[k].shape == v.shape: own[k].copy_(v)
+                elif own[k].dim() == v.dim():
+                    sl = tuple(slice(0, min(x, y)) for x, y in zip(own[k].shape, v.shape))
+                    own[k][sl] = v[sl]
+        model.load_state_dict(own)
+        say(f"warm start from {a.init_from} ({ck['preset']}, best {ck.get('best')})")
     say(f"start from preset {start}; params {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
-    train(model, a, tgt, total, a.iters, say, start)
+    if a.pool:
+        train_pool(model, a, tgt, total, a.iters, say, start, ck_resume)
+    elif a.opt == "es":
+        train_es(model, a, tgt, total, a.iters, say, start, ck_resume)
+    else:
+        train(model, a, tgt, total, a.iters, say, start, ck=ck_resume)
 
 
-def train(model, a, tgt, total, iters, say, name, quiet=False):
+def lr_factor(i, iters):
+    return min(1.0, (i + 1) / 20) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * min(i / max(iters, 1), 1))))
+
+
+def save_ckpt(path, **kw):
+    """atomic: a container restart mid-write must not leave half a checkpoint"""
+    torch.save(kw, path + ".tmp"); os.replace(path + ".tmp", path)
+
+
+def finish(model, a, tgt, total, say, name, best, best_state, iters):
+    if best_state is None: return
+    model.load_state_dict(best_state)
+    save_params(model, os.path.join(HERE, f"fca_gecko_{a.tag}.json"), {"preset": name, "best": best, "iters": iters, "args": vars(a)})
+    say("pictures:", *save_pictures(model, tgt, total, a, a.tag))
+
+
+def frame_loss(model, S, tgt, trgb, a):
+    """(total, mass part, colour part) for one full state"""
+    lm = ms_loss(S[0].reshape(model.N, model.N), tgt)
+    if not a.colour: return lm, lm, torch.zeros(())
+    lc = ms_loss(model.render(S), trgb)
+    return lm + a.wcol * lc, lm, lc
+
+
+def train(model, a, tgt, total, iters, say, name, quiet=False, ck=None):
+    trgb = load_target_rgb(a) if a.colour else None
     seedp = [p for n, p in model.named_parameters() if n.startswith("seed_") and p.requires_grad]
     rest = [p for n, p in model.named_parameters() if not n.startswith("seed_") and p.requires_grad]
     opt = torch.optim.Adam([{"params": rest, "lr": a.lr}, {"params": seedp, "lr": a.lr_seed * a.seed_speed}])
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda i: min(1.0, (i + 1) / 20) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * min(i / max(iters, 1), 1)))))
-    best, best_state = 1e9, None
-    t_start = time.time(); hist = []
-    for it in range(iters):
+    base_lr = [g["lr"] for g in opt.param_groups]
+    best, best_state, it0, hist, lr_scale, best_it = 1e9, None, 0, [], 1.0, 0
+    ckp = os.path.join(HERE, f"fca_gecko_{a.tag}.pt")
+    if ck is not None:
+        opt.load_state_dict(ck["opt"]); best, best_state = ck["best"], ck["state"]
+        it0, hist = ck["it"] + 1, ck.get("hist", [])
+        lr_scale, best_it = ck.get("lr_scale", 1.0), ck.get("best_it", ck["it"])
+        if "rng" in ck: torch.set_rng_state(ck["rng"])
+    def checkpoint_now(it):
+        save_ckpt(ckp, preset=name, state=best_state, cur={k: v.detach().clone() for k, v in model.state_dict().items()},
+                  opt=opt.state_dict(), it=it, best=best, hist=hist, args=vars(a), rng=torch.get_rng_state(), kind="grad",
+                  lr_scale=lr_scale, best_it=best_it)
+    t_start = t_ck = time.time()
+    it = it0 - 1
+    for it in range(it0, iters):
         t = time.time()
+        for g, b in zip(opt.param_groups, base_lr): g["lr"] = b * lr_factor(it, iters) * lr_scale
         tend = int(torch.randint(a.t0, a.t1 + 1, (1,)))
         keep = set(range(a.t0, tend + 1, 8)) | {tend, tend + a.hold} if a.hold else set(range(a.t0, tend + 1, 8)) | {tend}
-        out, S, T = model.run(total, max(keep), keep=keep)
-        losses = [ms_loss(m, tgt) for m in out.values()]
+        out, S, T = model.run(total, max(keep), keep=keep, full=True)
+        losses = [frame_loss(model, St, tgt, trgb, a)[0] for St in out.values()]
         loss = sum(losses) / len(losses)
         if not torch.isfinite(loss):
             say(f"it {it}: non-finite loss, restoring best");
             if best_state: model.load_state_dict(best_state)
             continue
         opt.zero_grad(); loss.backward()
-        gn = float(torch.nn.utils.clip_grad_norm_([p for g in opt.param_groups for p in g["params"]], a.clip))
-        if math.isfinite(gn): opt.step()
-        sched.step()
-        L = float(loss); hist.append(L)
+        # every tensor's gradient to unit norm before Adam: the unroll is chaotic, its gradient
+        # spans ten orders of magnitude from one iteration to the next, and one spike would
+        # otherwise poison Adam's second moment for hundreds of iterations
+        gn, ok = 0.0, True
+        for g in opt.param_groups:
+            for p in g["params"]:
+                if p.grad is None: continue
+                nrm = float(p.grad.norm()); gn = max(gn, nrm)
+                if not math.isfinite(nrm): ok = False; break
+                p.grad /= (nrm + 1e-12) / a.clip if nrm > 0 else 1
+        if ok: opt.step()
+        L = float(loss.detach()); hist.append(L)
         ema = sum(hist[-20:]) / len(hist[-20:])
         if ema < best and it > 10:
-            best = ema; best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            best = ema; best_it = it; best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        if a.rollback and best_state is not None and it - best_it > 20 and ema > best * a.rollback:
+            # the unroll has walked into a chaotic regime where the gradient is noise; go back
+            model.load_state_dict(best_state); opt.state.clear(); lr_scale *= 0.5; best_it = it; hist.append(best)
+            say(f"it {it}: ema {ema:.4f} > {a.rollback} x best {best:.4f}, back to best, lr x{lr_scale:.3g}")
         mass_err = float(S[0].sum()) / total - 1
         if not quiet and (it % 10 == 0 or it == iters - 1):
             P = {k: round(float(v), 4) for k, v in model.P().items()}
             say(f"it {it:5d} loss {L:.4f} ema {ema:.4f} best {best:.4f} T={tend} gn {gn:.2e} "
                 f"dmass {mass_err:+.1e} {time.time() - t:.2f}s/it  {P}")
-        if not quiet and (it % 100 == 0 or it == iters - 1) and best_state is not None:
+        if not quiet and time.time() - t_ck > a.ckpt_min * 60:
+            checkpoint_now(it); t_ck = time.time()
+        if not quiet and (it % 100 == 0) and best_state is not None:
             cur = {k: v.clone() for k, v in model.state_dict().items()}
-            model.load_state_dict(best_state)
-            torch.save({"preset": name, "state": best_state, "args": vars(a), "best": best},
-                       os.path.join(HERE, f"fca_gecko_{a.tag}.pt"))
-            save_params(model, os.path.join(HERE, f"fca_gecko_{a.tag}.json"), {"preset": name, "best": best, "iters": it + 1, "args": vars(a)})
-            save_pictures(model, tgt, total, a, a.tag)
+            finish(model, a, tgt, total, say, name, best, best_state, it + 1)
             model.load_state_dict(cur)
         if a.hours and time.time() - t_start > a.hours * 3600 and not quiet:
-            say(f"time limit at it {it}"); iters = it + 1; break
-    if best_state is not None:
+            say(f"time limit at it {it}"); break
+    if not quiet:
+        checkpoint_now(it)
+        finish(model, a, tgt, total, say, name, best, best_state, it + 1)
+    elif best_state is not None:
         model.load_state_dict(best_state)
-        if not quiet:
-            torch.save({"preset": name, "state": best_state, "args": vars(a), "best": best},
-                       os.path.join(HERE, f"fca_gecko_{a.tag}.pt"))
-            save_params(model, os.path.join(HERE, f"fca_gecko_{a.tag}.json"), {"preset": name, "best": best, "iters": iters, "args": vars(a)})
-            say("pictures:", *save_pictures(model, tgt, total, a, a.tag))
+    return best
+
+
+def long_eval(model, a, tgt, total, steps=(96, 160, 300, 500)):
+    trgb = load_target_rgb(a) if a.colour else None
+    with torch.no_grad():
+        out, _, _ = model.run(total, max(steps), keep=set(steps), ckpt=False, full=True)
+    r = {}
+    for t in steps:
+        L, lm, lc = frame_loss(model, out[t], tgt, trgb, a)
+        r[t] = (round(float(lm), 4), round(float(lc), 4)) if a.colour else round(float(lm), 4)
+    return r
+
+
+def train_pool(model, a, tgt, total, iters, say, name, ck=None):
+    """Growing NCA's sample pool. The pool holds whole states (mass, momentum, hidden, colour
+    AND the trail) and how many steps each has lived. Each iteration takes two at random; the
+    worse one (by its current loss) is replaced with a fresh seed. A seed runs until it is
+    grown (age t0..t1+hold) and is scored from t0 on, like the plain fit; a grown state runs a
+    segment of seg_min..seg_max steps and every score_every-th frame is scored. The gradient
+    goes back through that segment only, and the end states are written back to the pool."""
+    trgb = load_target_rgb(a) if a.colour else None
+    seedp = [p for n, p in model.named_parameters() if n.startswith("seed_") and p.requires_grad]
+    rest = [p for n, p in model.named_parameters() if not n.startswith("seed_") and p.requires_grad]
+    opt = torch.optim.Adam([{"params": rest, "lr": a.lr}, {"params": seedp, "lr": a.lr_seed * a.seed_speed}])
+    base_lr = [g["lr"] for g in opt.param_groups]
+    ckp = os.path.join(HERE, f"fca_gecko_{a.tag}.pt")
+    with torch.no_grad():
+        S0, T0 = model.init_state(total)
+    pool = [None] * a.pool          # None = a fresh seed
+    ages = [0] * a.pool
+    best, best_state, it0, hist, lr_scale, best_it = 1e9, None, 0, [], 1.0, 0
+    if ck is not None:
+        opt.load_state_dict(ck["opt"]); best, best_state = ck["best"], ck["state"]
+        it0, hist = ck["it"] + 1, ck.get("hist", [])
+        lr_scale, best_it = ck.get("lr_scale", 1.0), ck.get("best_it", ck["it"])
+        if "pool" in ck: pool, ages = ck["pool"], ck["ages"]
+        if "rng" in ck: torch.set_rng_state(ck["rng"])
+    def checkpoint_now(it):
+        save_ckpt(ckp, preset=name, state=best_state, cur={k: v.detach().clone() for k, v in model.state_dict().items()},
+                  opt=opt.state_dict(), it=it, best=best, hist=hist, args=vars(a), rng=torch.get_rng_state(), kind="pool",
+                  lr_scale=lr_scale, best_it=best_it, pool=pool, ages=ages)
+    say(f"pool {a.pool}, segments {a.seg_min}..{a.seg_max}, scoring every {a.score_every} frames; before: {long_eval(model, a, tgt, total)}")
+    t_start = t_ck = time.time(); it = it0 - 1
+    for it in range(it0, iters):
+        t = time.time()
+        for g, b in zip(opt.param_groups, base_lr): g["lr"] = b * lr_factor(it, iters) * lr_scale
+        idx = torch.randperm(a.pool)[:2].tolist()
+        with torch.no_grad():   # the worse of the two goes back to the seed
+            cur = [float(frame_loss(model, pool[i][0], tgt, trgb, a)[0]) if pool[i] is not None and ages[i] >= a.t0 else 1e9 for i in idx]
+        worst = idx[int(np.argmax(cur))]
+        pool[worst], ages[worst] = None, 0
+        opt.zero_grad(); info = []
+        tot_loss, ok = 0.0, True
+        for i in idx:
+            st = model.init_state(total) if pool[i] is None else (pool[i][0].clone(), pool[i][1].clone())   # a seed keeps its gradient to the seed values
+            age = ages[i]
+            if age < a.t0: L = int(torch.randint(a.t0, a.t1 + a.hold + 1, (1,))) - age
+            else: L = int(torch.randint(a.seg_min, a.seg_max + 1, (1,)))
+            stride = 8 if age < a.t0 else a.score_every
+            keep = {k for k in range(1, L + 1) if age + k >= a.t0 and ((age + k) % stride == 0 or k == L)}
+            out, S, T = model.run(total, L, keep=keep, full=True)
+            parts = [frame_loss(model, St, tgt, trgb, a) for St in out.values()]
+            loss = sum(p[0] for p in parts) / len(parts)
+            if not torch.isfinite(loss): ok = False; break
+            loss.backward()
+            pool[i] = (S.detach(), T.detach()); ages[i] = age + L
+            lm = float(sum(p[1] for p in parts) / len(parts)); lc = float(sum(p[2] for p in parts) / len(parts))
+            info.append(f"{'seed' if age == 0 else age}->{age + L}: {lm:.3f}" + (f"/{lc:.3f}" if a.colour else ""))
+            tot_loss += float(loss) / len(idx)
+        if not ok:
+            say(f"it {it}: non-finite loss, restoring best"); opt.zero_grad()
+            if best_state: model.load_state_dict(best_state)
+            pool = [None] * a.pool; ages = [0] * a.pool
+            continue
+        gn = 0.0
+        for g in opt.param_groups:
+            for p in g["params"]:
+                if p.grad is None: continue
+                nrm = float(p.grad.norm()); gn = max(gn, nrm)
+                if not math.isfinite(nrm): p.grad.zero_(); continue
+                if nrm > 0: p.grad /= (nrm + 1e-12) / a.clip
+        opt.step()
+        hist.append(tot_loss)
+        ema = sum(hist[-40:]) / len(hist[-40:])
+        if ema < best and it > 20:
+            best = ema; best_it = it; best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        if a.rollback and best_state is not None and it - best_it > 40 and ema > best * a.rollback:
+            model.load_state_dict(best_state); opt.state.clear(); lr_scale *= 0.5; best_it = it
+            pool = [None] * a.pool; ages = [0] * a.pool
+            say(f"it {it}: ema {ema:.4f} > {a.rollback} x best {best:.4f}, back to best, lr x{lr_scale:.3g}, pool reset")
+        if it % 10 == 0 or it == iters - 1:
+            extra = f" hue {float(model.hue_sens):.3f}+{float(model.hue_off):.3f} br {float(model.cbright):.2f}" if a.colour else ""
+            say(f"it {it:5d} loss {tot_loss:.4f} ema {ema:.4f} best {best:.4f} [{'; '.join(info)}] gn {gn:.1e} "
+                f"maxage {max(ages)} {time.time() - t:.1f}s/it{extra}")
+        if time.time() - t_ck > a.ckpt_min * 60:
+            checkpoint_now(it); t_ck = time.time()
+        if it % a.eval_every == 0 and it > 0:
+            say(f"eval it {it} (current params, from the seed): {long_eval(model, a, tgt, total)}")
+        if it % 100 == 0 and best_state is not None:
+            cur_s = {k: v.clone() for k, v in model.state_dict().items()}
+            finish(model, a, tgt, total, say, name, best, best_state, it + 1); model.load_state_dict(cur_s)
+        if a.hours and time.time() - t_start > a.hours * 3600:
+            say(f"time limit at it {it}"); break
+    checkpoint_now(it)
+    finish(model, a, tgt, total, say, name, best, best_state, it + 1)
+    say(f"after (best params, from the seed): {long_eval(model, a, tgt, total)}")
+    return best
+
+
+def train_es(model, a, tgt, total, iters, say, name, ck=None):
+    """Antithetic evolution strategy over every trainable tensor, each perturbed relative to its
+    own scale, ranks for fitness, Adam on the estimate. It needs no gradient through the chaotic
+    unroll, which is the thing that makes the backprop fit noisy. Fitness is deterministic: the
+    mean multiscale loss at t0, the middle, t1 and t1 + hold."""
+    names = [n for n, p in model.named_parameters() if p.requires_grad and (a.es_seed or not n.startswith("seed_"))]
+    prm = dict(model.named_parameters())
+    scale = {}
+    for n in names:
+        p = prm[n].detach()
+        if n == "seed_v": scale[n] = a.seed_speed
+        elif p.numel() == 1: scale[n] = max(abs(float(p)), 0.1)
+        else: scale[n] = max(float(p.pow(2).mean().sqrt()), 0.05)
+    flat = lambda: torch.cat([prm[n].detach().reshape(-1) / scale[n] for n in names])
+    sizes = [prm[n].numel() for n in names]
+    def put(x):
+        with torch.no_grad():
+            for n, c in zip(names, torch.split(x, sizes)): prm[n].copy_(c.reshape(prm[n].shape) * scale[n])
+    tk = sorted({a.t0, (a.t0 + a.t1) // 2, a.t1, a.t1 + a.hold})
+    def fit(x):
+        put(x)
+        with torch.no_grad():
+            out, _, _ = model.run(total, max(tk), keep=set(tk), ckpt=False)
+        v = sum(float(ms_loss(m, tgt)) for m in out.values()) / len(tk)
+        return v if math.isfinite(v) else 1e9
+    x = flat(); D = x.numel()
+    m1 = torch.zeros(D); m2 = torch.zeros(D); it0 = 0
+    best, best_state, hist = 1e9, None, []
+    ckp = os.path.join(HERE, f"fca_gecko_{a.tag}.pt")
+    gen = torch.Generator().manual_seed(a.seed + 1)
+    if ck is not None:
+        x = ck["x"]; m1, m2 = ck["m1"], ck["m2"]; it0 = ck["it"] + 1
+        best, best_state, hist = ck["best"], ck["state"], ck.get("hist", [])
+        gen.manual_seed(a.seed + 1 + it0)
+    def checkpoint_now(it):
+        put(x)
+        save_ckpt(ckp, preset=name, state=best_state, cur={k: v.detach().clone() for k, v in model.state_dict().items()},
+                  x=x, m1=m1, m2=m2, it=it, best=best, hist=hist, args=vars(a), kind="es")
+    say(f"ES over {D} numbers ({len(names)} tensors), {2 * a.es_pop} runs a generation, steps {tk}")
+    t_start = t_ck = time.time(); it = it0 - 1
+    for it in range(it0, iters):
+        t = time.time()
+        f0 = fit(x)
+        if f0 < best:
+            best = f0; best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        hist.append(f0)
+        eps = torch.randn(a.es_pop, D, generator=gen)
+        fp = torch.tensor([fit(x + a.es_sigma * e) for e in eps])
+        fm = torch.tensor([fit(x - a.es_sigma * e) for e in eps])
+        allf = torch.cat([fp, fm])
+        for k, v in enumerate(allf.tolist()):   # a perturbed child can be the best seen
+            if v < best:
+                e = eps[k % a.es_pop] * (1 if k < a.es_pop else -1)
+                put(x + a.es_sigma * e); best = v
+                best_state = {kk: vv.detach().clone() for kk, vv in model.state_dict().items()}
+        rk = torch.empty(2 * a.es_pop); rk[allf.argsort()] = torch.arange(2 * a.es_pop, dtype=torch.float32)
+        rk = rk / (2 * a.es_pop - 1) - 0.5                       # centred ranks, low loss = -0.5
+        g = ((rk[:a.es_pop] - rk[a.es_pop:])[:, None] * eps).sum(0) / (a.es_pop * a.es_sigma)
+        b1, b2 = 0.9, 0.999
+        m1 = b1 * m1 + (1 - b1) * g; m2 = b2 * m2 + (1 - b2) * g * g
+        mh = m1 / (1 - b1 ** (it + 1)); vh = m2 / (1 - b2 ** (it + 1))
+        x = x - a.es_lr * lr_factor(it, iters) * mh / (vh.sqrt() + 1e-8)
+        if it % 5 == 0 or it == iters - 1:
+            put(x); P = {k: round(float(v), 4) for k, v in model.P().items()}
+            say(f"gen {it:5d} centre {f0:.4f} kids {float(allf.min()):.4f}..{float(allf.median()):.4f} best {best:.4f} "
+                f"{time.time() - t:.1f}s/gen  {P}")
+        if time.time() - t_ck > a.ckpt_min * 60:
+            checkpoint_now(it); t_ck = time.time()
+        if it % 50 == 0 and best_state is not None:
+            finish(model, a, tgt, total, say, name, best, best_state, it + 1); put(x)
+        if a.hours and time.time() - t_start > a.hours * 3600:
+            say(f"time limit at gen {it}"); break
+    checkpoint_now(it)
+    finish(model, a, tgt, total, say, name, best, best_state, it + 1)
     return best
 
 

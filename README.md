@@ -92,13 +92,29 @@ The snapshots are at world size 0.05, after 300 steps. At the page's default siz
 
 ## Training it to grow a gecko
 
-`train/fluoddity_ca_gecko.py` is the CA's step written in PyTorch, which makes it differentiable. It fits the brain and the physics settings so that a disc of mass grows into `train/gecko.png`: at its own 128×128 resolution, one pixel per cell, in the middle of a 256×256 grid. Three options can each be switched on with a flag:
+`train/fluoddity_ca_gecko.py` is the CA's step written in PyTorch, which makes it differentiable. It fits the brain, the physics settings and the seed's starting velocity so that a disc of mass grows into `train/gecko.png`: at its own 128×128 resolution, one pixel per cell, in the middle of a 256×256 grid. Mass is conserved throughout.
 
-- `--see_mass`: the eyes also read mass.
-- `--centres N`: a bigger brain, with N Fourier terms instead of 10.
-- `--hidden H`: H hidden numbers carried along with the mass.
+| variant | trainable numbers | loss | what grows |
+|---|---|---|---|
+| faithful: the 80-number brain | 1,550 | 0.140 | a gecko at steps 48–80 (body, head, 4 legs, tail), blurring afterwards |
+| + the eyes also see mass | 1,581 | 0.133 | a clear gecko with a curled tail that holds to step 160 |
+| + 48 Fourier terms | 1,999 | 0.134 | no better |
+| + 6 hidden channels | 6,382 | **0.098** | a clean silhouette, stable to step 160 |
+| launch velocity frozen as radial | 92 | 0.443 | an 8-armed star |
 
-The first runs are in progress.
+The loss is multiscale MSE scaled so that predicting nothing scores 1.0. For comparison, the best possible radially symmetric shape scores 0.45 and a gecko blurred by 8 pixels scores 0.13. None of the runs grows toes, eyes or spots.
+
+![growth](train/fca_gecko_hidden6_grow.gif)
+
+**What draws the gecko.** Neither the brain nor the learned launch velocity does it alone:
+- The launch velocity alone smears into a blob (loss 0.52).
+- The brain alone, with a radial launch, grows a symmetric star (0.64).
+
+The rule is symmetric, so a symmetric seed can never give the animal a front: the launch velocity is the seed hint that breaks the symmetry. It doesn't need many numbers; an 18-number low-resolution hint gets 0.158, against 0.163 for the full field.
+
+![ablation](train/fca_gecko_hidden6_ablate.png)
+
+Colour (training the hue the page already has, the forward-force channel) and the Growing NCA sample pool, meant to keep the shape stable for longer, are flags of the script (`--colour`, `--pool`). Their first runs are still going. So far the pool is making long-horizon stability worse, not better.
 
 ## Files
 
