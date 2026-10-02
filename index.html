@@ -109,11 +109,14 @@ step():
   <li><b>Deposit.</b> <code>trail += mass · vel · (1 − persistence) · 7.07</code>, where 7.07 is Fluoddity's average splat per particle.</li>
 </ol>
 
-<h3>Two knobs Fluoddity doesn't have</h3>
+<h3>What Fluoddity doesn't have</h3>
 <p><b>Spread</b>: the box that carries the mass can be wider than one cell. Wider means softer and more liquid.</p>
 <figure><img src="img/ca_spread.png" alt="Spread 1, 2 and 3"><figcaption>The default preset at spread 1, 2 and 3.</figcaption></figure>
 <p><b>Pressure</b>: mass above a rest level pushes down its own gradient. At 0 it is exactly the original model.</p>
 <figure><img src="img/ca_pressure.png" alt="Pressure 0, 0.3 and 1"><figcaption>Bubbles at pressure 0, 0.3 and 1.</figcaption></figure>
+
+<p><b>Species</b>: a cohort can be its own field, with its own mass, velocity and brain. Species never see each other directly. They meet in the shared trail, which all of them write to and read from, and, with pressure on, in the crowding.</p>
+<figure><img src="img/ca_species.png" alt="1, 3 and 2 species"><figcaption>The default preset with 1 and 3 species, and Bubbles with 2.</figcaption></figure>
 
 <h3>A family of its own</h3>
 <p>A novelty search started from Fluoddity's presets with random spread, pressure and brain choice, and mutated them slowly. It scored candidates on 13 measured features and threw out dead, static and exploding runs. 24 of its 194 candidates are the <i>CA family</i> in the simulator.</p>

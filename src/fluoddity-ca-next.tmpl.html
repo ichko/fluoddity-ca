@@ -44,7 +44,7 @@ button:hover,select:hover{border-color:var(--accent)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .btns{display:flex;flex-wrap:wrap;gap:6px}
 .chk{display:flex;gap:6px;align-items:center;color:var(--ink2)}
-.mine{display:grid;grid-template-columns:1fr auto auto;gap:6px}
+.mine{display:grid;grid-template-columns:1fr auto auto auto;gap:6px}
 .mine input{min-width:0;background:#0a0e10;color:var(--ink);border:1px solid var(--line);border-radius:4px;font:12px var(--font-data);padding:5px 7px}
 .sel{display:grid;grid-template-columns:96px 1fr;gap:6px;align-items:center;color:var(--ink2)}
 #preset{width:100%}
@@ -76,7 +76,7 @@ body.hidep #toggle{display:block}
       <select id="preset"></select>
       <label class="sel" style="margin-top:6px"><span>CA family</span><select id="ca-preset"><option value="">—</option></select></label>
       <label class="sel"><span>my presets</span><select id="my-preset"><option value="">—</option></select></label>
-      <div class="mine"><input id="my-name" type="text" placeholder="name for Ctrl+S" aria-label="preset name" spellcheck="false"><button id="b-save" type="button" title="Ctrl+S">save</button><button id="b-del" type="button" title="delete the selected preset">delete</button></div>
+      <div class="mine"><input id="my-name" type="text" placeholder="name for Ctrl+S" aria-label="preset name" spellcheck="false"><button id="b-save" type="button" title="Ctrl+S: always a new preset">save new</button><button id="b-over" type="button" title="replace the selected preset with the current settings">overwrite</button><button id="b-del" type="button" title="delete the selected preset">delete</button></div>
       <div class="btns">
         <button id="b-reset" type="button" title="R">reset</button>
         <button id="b-mutate" type="button" title="M">new mutations</button>
@@ -84,7 +84,7 @@ body.hidep #toggle{display:block}
         <button id="b-back" type="button" title="Backspace">back</button>
         <button id="b-pause" type="button" title="Space">pause</button>
       </div>
-      <div class="note">No particles: every cell holds a <b>mass</b> and a <b>velocity</b>, runs Fluoddity's brain on the trail, and pushes its mass to where it lands. One brain for the whole grid; pick which cohort's below. Drag to pan, wheel to zoom, double-click to recentre.</div>
+      <div class="note">No particles: every cell holds a <b>mass</b> and a <b>velocity</b>, runs Fluoddity's brain on the trail, and pushes its mass to where it lands. With <b>species</b> above 1, cohorts become separate fields, each with its own mass, velocity and brain, meeting only through the shared trail; <b>brain</b> picks the first one's cohort. Drag to pan, wheel to zoom, double-click to recentre.</div>
     </div>
     <div class="grp" id="g-phys"><h2>Physics</h2></div>
     <div class="grp" id="g-set"><h2>Setup</h2></div>
@@ -178,10 +178,13 @@ void main(){
 }`;
 
 // ============================================================================
-// THE CA. Three grids on the same CN x CN lattice:
-//   trail : RG    net flow, exactly Fluoddity's canvas
-//   state : RGBA  (mass, momentum.x, momentum.y, mass*colour) -- velocity = momentum/mass
-// One brain for every cell (one cohort's row of the rule table).
+// THE CA. Grids on the same CN x CN lattice:
+//   trail    : RG    net flow, exactly Fluoddity's canvas, SHARED by every species
+//   state[s] : RGBA  per species (mass, momentum.x, momentum.y, mass*colour) -- velocity = momentum/mass
+// A species is one cohort made into a field: its own mass, its own velocity, its own brain
+// (one row of the rule table). Species never see each other directly; they meet only in
+// the trail, which every species writes into and reads from -- and, with pressure on, in
+// the crowding, which is counted over all of them.
 // Units: positions and velocities are in Fluoddity's world units ([-1,1] across
 // the grid), mass is in "particles", so every constant below is Fluoddity's own.
 // ============================================================================
@@ -244,10 +247,12 @@ void emit(vec2 p, vec2 v, float m, float col, int k){
   vVal = vec4(mw, mw*v, mw*col);
 }`;
 const VS_SPLAT_PARTICLES = HEAD + `
-uniform sampler2D uP; uniform int uPW, uN;` + SPLIT + `
+uniform sampler2D uP; uniform int uPW, uN, uSpecies, uNS, uCohorts; uniform float uWS;` + SPLIT + `
 void main(){
   int id = gl_VertexID, i = id/(uK*uK);
-  if(i >= uN){ gl_Position = vec4(9.0, 9.0, 0.0, 1.0); gl_PointSize = 1.0; vVal = vec4(0); return; }
+  // a particle belongs to the species its cohort maps to, so each species starts where its cohorts start
+  int cohort = int(floor(float(uCohorts)*float(i)/(600000.0*uWS)));
+  if(i >= uN || cohort % uNS != uSpecies){ gl_Position = vec4(9.0, 9.0, 0.0, 1.0); gl_PointSize = 1.0; vVal = vec4(0); return; }
   vec4 s = texelFetch(uP, ivec2(i % uPW, i / uPW), 0);
   emit(s.xy, s.zw, 1.0, 0.0, id % (uK*uK));
 }`;
@@ -265,10 +270,20 @@ void main(){
 const FS_SPLAT = `#version 300 es
 precision highp float; in vec4 vVal; out vec4 o; void main(){ o = vVal; }`;
 
+// Up to four species. GLSL ES cannot index a sampler array with a variable, so they are
+// four named samplers and an unused one is never read.
+const SPECIES = `
+uniform sampler2D uS0, uS1, uS2, uS3; uniform int uNS;
+vec4 sp(int s, ivec2 p){ return s == 0 ? texelFetch(uS0, p, 0) : s == 1 ? texelFetch(uS1, p, 0) : s == 2 ? texelFetch(uS2, p, 0) : texelFetch(uS3, p, 0); }`;
+// total mass over every species, for pressure: crowding does not care whose mass it is
+const FS_TOTAL = HEAD + SPECIES + `
+out vec4 o;
+void main(){ ivec2 p = ivec2(gl_FragCoord.xy); float m = 0.0; for(int s = 0; s < 4; s++) if(s < uNS) m += sp(s, p).x; o = vec4(m, 0, 0, 0); }`;
+
 // ---- 1. every cell: sense, think, accelerate. Same maths as Fluoddity's particle,
 //         with the cell centre as the position and momentum/mass as the velocity.
 const FS_BRAIN = HEAD + `
-uniform sampler2D uState, uCanvas, uRules;
+uniform sampler2D uState, uCanvas, uRules, uTotal;
 uniform int uCN, uBrain, uCohorts, uBoundary, uAbsOri;
 uniform float uWS, uAxial, uLateral, uGain, uDrag, uStrafeP, uAngle, uGFM, uDist, uOriMix;
 uniform float uPress, uRest;   // pressure strength, and the mass above which it pushes
@@ -336,7 +351,7 @@ void main(){
       if(dx == 0 && dy == 0) continue;
       ivec2 c = ij + ivec2(dx, dy);
       c = uBoundary == 2 ? (c % uCN + uCN) % uCN : clamp(c, 0, uCN - 1);
-      float P = max(texelFetch(uState, c, 0).x - uRest, 0.0);
+      float P = max(texelFetch(uTotal, c, 0).x - uRest, 0.0);
       float wgt = (dx == 0 || dy == 0) ? 2.0 : 1.0;
       g += wgt*P*vec2(dx, dy);
     }
@@ -350,8 +365,8 @@ void main(){
 
 // ---- 2. trail: blur, fade, then every cell deposits its momentum. Fluoddity's
 //         per-particle splat averages to vel*(1-p)*7.07 into the pixel it sits in.
-const FS_TRAIL = HEAD + `
-uniform sampler2D uCan, uState; uniform float uPersist, uDiff; uniform int uFrame;
+const FS_TRAIL = HEAD + SPECIES + `
+uniform sampler2D uCan; uniform float uPersist, uDiff; uniform int uFrame;
 in vec2 vUv; out vec4 o;
 void main(){
   if(uFrame==0){ o = vec4(0); return; }
@@ -362,25 +377,36 @@ void main(){
   vec2 s = texelFetch(uCan, (p+ivec2(0,1)+n)%n, 0).rg + texelFetch(uCan, (p-ivec2(0,1)+n)%n, 0).rg
          + texelFetch(uCan, (p+ivec2(1,0)+n)%n, 0).rg + texelFetch(uCan, (p-ivec2(1,0)+n)%n, 0).rg;
   vec2 b = (c*K + s)/(4.0 + K)*clamp(uPersist, 0.0, 0.999);
-  vec2 mom = texelFetch(uState, p, 0).yz;
+  vec2 mom = vec2(0); for(int s = 0; s < 4; s++) if(s < uNS) mom += sp(s, p).yz;
   o = vec4(b + mom*(1.0 - clamp(uPersist, 0.001, 0.999))*7.07, 0.0, 0.0);
 }`;
 
 // ---- what you see: each cell glows with its mass, in the hue its brain gives it.
 //      0.118 per unit mass is what one Fluoddity particle's sprite adds per cell.
-const FS_CELLS = HEAD + `
-uniform sampler2D uState; uniform int uCN; uniform float uZoom, uHueSens, uCohortHue; uniform vec2 uCam;
+const FS_CELLS = HEAD + SPECIES + `
+uniform int uCN; uniform float uZoom, uHueSens, uSpHue[4]; uniform vec2 uCam;
 uniform bool uWater, uByCohort, uSmooth;
 in vec2 vUv; out vec4 o;
+vec4 spAt(int s, vec2 uv){
+  if(!uSmooth) return sp(s, ivec2(floor(uv*float(uCN))));
+  return s == 0 ? texture(uS0, uv) : s == 1 ? texture(uS1, uv) : s == 2 ? texture(uS2, uv) : texture(uS3, uv);
+}
 void main(){
   vec2 w = (vUv*2.0 - 1.0)*uZoom + uCam;
   if(abs(w.x) > 1.0 || abs(w.y) > 1.0){ o = vec4(0, 0, 0, 1); return; }
-  vec4 s = uSmooth ? texture(uState, (w + 1.0)*0.5) : texelFetch(uState, ivec2(floor((w + 1.0)*0.5*float(uCN))), 0);
-  float m = s.x;
-  float hue = uByCohort ? uCohortHue : (m > 0.0 ? uHueSens*s.w/m : 0.0);
-  vec3 c = hsv2rgb(vec3(hue, 0.8, 1.0));
-  if(uWater) c = log(clamp(c, 0.001, 0.9));
-  o = vec4(c*m*0.118, 1.0);
+  vec3 acc = vec3(0);
+  for(int k = 0; k < 4; k++){
+    if(k >= uNS) break;
+    vec4 s = spAt(k, (w + 1.0)*0.5);
+    float m = s.x;
+    if(m <= 0.0) continue;
+    // colour by species: each its own hue. Otherwise the brain's force picks the hue, offset per species
+    float hue = uByCohort ? uSpHue[k] : uHueSens*s.w/m + (uNS > 1 ? uSpHue[k] : 0.0);
+    vec3 c = hsv2rgb(vec3(hue, 0.8, 1.0));
+    if(uWater) c = log(clamp(c, 0.001, 0.9));
+    acc += c*m*0.118;
+  }
+  o = vec4(acc, 1.0);
 }`;
 
 
@@ -448,7 +474,7 @@ function compile(vs, fs){
 const P = {
   rules: compile(VS_QUAD, FS_RULES), init: compile(VS_QUAD, FS_INIT), brain: compile(VS_QUAD, FS_BRAIN),
   splatParticles: compile(VS_SPLAT_PARTICLES, FS_SPLAT), move: compile(VS_MOVE, FS_SPLAT), trail: compile(VS_QUAD, FS_TRAIL),
-  cells: compile(VS_QUAD, FS_CELLS), accum: compile(VS_QUAD, FS_ACCUM),
+  cells: compile(VS_QUAD, FS_CELLS), total: compile(VS_QUAD, FS_TOTAL), accum: compile(VS_QUAD, FS_ACCUM),
   tone: compile(VS_QUAD, FS_TONE), down: compile(VS_QUAD, FS_DOWN), up: compile(VS_QUAD, FS_UP),
   comp: compile(VS_QUAD, FS_COMPOSITE), blit: compile(VS_BLIT, FS_BLIT),
 };
@@ -478,11 +504,12 @@ function buildWorld(ws){
   const N = Math.floor(600000*ws), PH = Math.ceil(N/PW);   // N = how many particles' worth of mass
   const CN = Math.floor(1024*Math.sqrt(ws));               // grid side, 1:1 aspect
   const parts = rgba32(PW, PH);
-  const state = [0,1].map(() => rgba32(CN, CN, gl.LINEAR));
-  const A = rgba32(CN, CN), B = rgba32(CN, CN);
+  const state = [0,1,2,3].map(() => [0,1].map(() => rgba32(CN, CN, gl.LINEAR)));   // [species][ping-pong]
+  const A = rgba32(CN, CN), B = rgba32(CN, CN), total = rgba32(CN, CN);
   const can = [0,1].map(() => TRAIL_32 ? tex(CN, CN, gl.RG32F, gl.RG, gl.FLOAT, gl.LINEAR, gl.REPEAT)
                                        : tex(CN, CN, gl.RG16F, gl.RG, gl.HALF_FLOAT, gl.LINEAR, gl.REPEAT));
-  W = { ws, N, PH, CN, parts, partsF: fbo(parts), state, stateF: state.map(t => fbo(t)), A, B, abF: fbo(A, B),
+  W = { ws, N, PH, CN, parts, partsF: fbo(parts), state, stateF: state.map(p => p.map(t => fbo(t))), A, B, abF: fbo(A, B),
+        total, totalF: fbo(total),
         can, canF: can.map(t => fbo(t)), cur: 0, ccur: 0, mass: 0 };
 }
 
@@ -521,7 +548,7 @@ const S = {};          // current settings
 let baseRule = new Float32Array(80);
 const history = [];
 const look = { speed:5, motion_blur:true, blur_quality:2, world_size:0.4, brightness:3.0, tonemap_softness:2.5,
-               bloom:true, bloom_threshold:0.11, bloom_intensity:0.23, bloom_radius:1.0, brain:0, smooth:false, spread:2, pressure:0, rest:1 };
+               bloom:true, bloom_threshold:0.11, bloom_intensity:0.23, bloom_radius:1.0, brain:0, smooth:false, spread:2, pressure:0, rest:1, species:1 };
 let frame = 0, paused = false, rulesDirty = true;
 const cam = { x:0, y:0, zoom:1 };
 
@@ -536,6 +563,7 @@ function loadPreset(c){
   // CA-family presets carry their own grid knobs; Fluoddity presets get the defaults
   look.spread = c.spread ?? 2; look.pressure = c.pressure ?? 0; look.rest = c.rest ?? 1;
   look.brain = Math.max(0, Math.min(Math.round(c.brain ?? 0), S.num_cohorts - 1));
+  if(c.species !== undefined) look.species = c.species;
   syncUI(); rulesDirty = true; frame = 0;
 }
 
@@ -550,6 +578,12 @@ function bakeRules(){
   gl.drawArrays(gl.TRIANGLES, 0, 3); rulesDirty = false;
 }
 
+const NS = () => Math.max(1, Math.min(4, Math.round(look.species || 1)));
+// bind the four species samplers of one ping-pong side, starting at texture unit u0
+function bindSpecies(pr, side, u0){
+  for(let s = 0; s < 4; s++) bindTex(u0 + s, W.state[Math.min(s, NS() - 1)][side], pr, "uS" + s);
+  gl.uniform1i(pr.u.uNS, NS());
+}
 function clearTo(f){ target(f); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT); }
 
 function initWorld(){
@@ -559,15 +593,20 @@ function initWorld(){
   gl.uniform1i(pr.u.uPW, PW); gl.uniform1i(pr.u.uN, w.N); gl.uniform1i(pr.u.uCohorts, S.num_cohorts);
   gl.uniform1i(pr.u.uResetMode, S.initial_conditions); gl.uniform1f(pr.u.uWS, w.ws);
   target(w.partsF); gl.drawArrays(gl.TRIANGLES, 0, 3);
-  // ...pushed onto the grid
-  clearTo(w.stateF[w.cur]);
+  // ...pushed onto the grid, each particle into its own species' field
   pr = P.splatParticles; gl.useProgram(pr.p);
   bindTex(0, w.parts, pr, "uP"); gl.uniform1i(pr.u.uPW, PW); gl.uniform1i(pr.u.uN, w.N);
   gl.uniform1i(pr.u.uCN, w.CN); gl.uniform1i(pr.u.uBoundary, S.boundary_conditions);
   gl.uniform1f(pr.u.uBox, 1.0); gl.uniform1i(pr.u.uK, 2);
-  gl.enable(gl.BLEND); gl.blendEquation(gl.FUNC_ADD); gl.blendFunc(gl.ONE, gl.ONE);
-  gl.drawArrays(gl.POINTS, 0, 4*PW*w.PH);
-  gl.disable(gl.BLEND);
+  gl.uniform1i(pr.u.uNS, NS()); gl.uniform1i(pr.u.uCohorts, S.num_cohorts); gl.uniform1f(pr.u.uWS, w.ws);
+  for(let s = 0; s < 4; s++){
+    clearTo(w.stateF[s][w.cur]);
+    if(s >= NS()) continue;
+    gl.uniform1i(pr.u.uSpecies, s);
+    gl.enable(gl.BLEND); gl.blendEquation(gl.FUNC_ADD); gl.blendFunc(gl.ONE, gl.ONE);
+    gl.drawArrays(gl.POINTS, 0, 4*PW*w.PH);
+    gl.disable(gl.BLEND);
+  }
   clearTo(w.canF[0]); clearTo(w.canF[1]);
 }
 
@@ -575,11 +614,17 @@ function physicsStep(){
   if(rulesDirty) bakeRules();
   const w = W;
   if(frame === 0){ initWorld(); frame++; return; }
-  // 1. every cell senses the trail, runs the brain, accelerates
-  let pr = P.brain; gl.useProgram(pr.p); gl.disable(gl.BLEND);
-  bindTex(0, w.state[w.cur], pr, "uState"); bindTex(1, w.can[w.ccur], pr, "uCanvas"); bindTex(2, rulesTex, pr, "uRules");
+  const ns = NS(), nx = 1 - w.cur;
+  // 0. the total mass, for pressure
+  let pr = P.total; gl.useProgram(pr.p); gl.disable(gl.BLEND);
+  bindSpecies(pr, w.cur, 0); target(w.totalF); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  for(let s = 0; s < ns; s++){
+  // 1. every cell of this species senses the shared trail, runs its brain, accelerates
+  pr = P.brain; gl.useProgram(pr.p); gl.disable(gl.BLEND);
+  bindTex(0, w.state[s][w.cur], pr, "uState"); bindTex(1, w.can[w.ccur], pr, "uCanvas"); bindTex(2, rulesTex, pr, "uRules");
+  bindTex(3, w.total, pr, "uTotal");
   const U = pr.u;
-  gl.uniform1i(U.uCN, w.CN); gl.uniform1i(U.uBrain, look.brain); gl.uniform1i(U.uCohorts, S.num_cohorts);
+  gl.uniform1i(U.uCN, w.CN); gl.uniform1i(U.uBrain, (look.brain + s) % S.num_cohorts); gl.uniform1i(U.uCohorts, S.num_cohorts);
   gl.uniform1i(U.uBoundary, S.boundary_conditions); gl.uniform1i(U.uAbsOri, S.absolute_orientation);
   gl.uniform1f(U.uWS, w.ws); gl.uniform1f(U.uAxial, S.axial_force); gl.uniform1f(U.uLateral, S.lateral_force);
   gl.uniform1f(U.uGain, S.sensor_gain); gl.uniform1f(U.uDrag, S.drag); gl.uniform1f(U.uStrafeP, S.strafe_power);
@@ -587,9 +632,8 @@ function physicsStep(){
   gl.uniform1f(U.uOriMix, S.orientation_mix); gl.uniform1i(U.uSym, S.disable_symmetry ? 0 : 1);
   gl.uniform1f(U.uPress, look.pressure); gl.uniform1f(U.uRest, look.rest*w.N/(w.CN*w.CN));
   target(w.abF); gl.drawArrays(gl.TRIANGLES, 0, 3);
-  // 2. every cell pushes its mass and momentum to where it lands, split bilinearly
-  const nx = 1 - w.cur;
-  clearTo(w.stateF[nx]);
+  // 2. every cell pushes its mass and momentum to where it lands, split by overlap
+  clearTo(w.stateF[s][nx]);
   pr = P.move; gl.useProgram(pr.p);
   bindTex(0, w.A, pr, "uA"); bindTex(1, w.B, pr, "uB");
   gl.uniform1i(pr.u.uCN, w.CN); gl.uniform1i(pr.u.uBoundary, S.boundary_conditions);
@@ -598,11 +642,12 @@ function physicsStep(){
   gl.enable(gl.BLEND); gl.blendEquation(gl.FUNC_ADD); gl.blendFunc(gl.ONE, gl.ONE);
   gl.drawArrays(gl.POINTS, 0, K*K*w.CN*w.CN);
   gl.disable(gl.BLEND);
+  }
   w.cur = nx;
-  // 3. the trail blurs, fades, and takes every cell's momentum
+  // 3. the trail blurs, fades, and takes the momentum of every cell of every species
   const cn = 1 - w.ccur;
   pr = P.trail; gl.useProgram(pr.p);
-  bindTex(0, w.can[w.ccur], pr, "uCan"); bindTex(1, w.state[w.cur], pr, "uState");
+  bindTex(0, w.can[w.ccur], pr, "uCan"); bindSpecies(pr, w.cur, 1);
   gl.uniform1f(pr.u.uPersist, S.trail_persistence); gl.uniform1f(pr.u.uDiff, S.trail_diffusion); gl.uniform1i(pr.u.uFrame, frame);
   target(w.canF[cn]); gl.drawArrays(gl.TRIANGLES, 0, 3);
   w.ccur = cn;
@@ -612,10 +657,11 @@ function physicsStep(){
 function renderSample(nSamples){
   const w = W;
   let pr = P.cells; gl.useProgram(pr.p); gl.disable(gl.BLEND);
-  bindTex(0, w.state[w.cur], pr, "uState"); gl.uniform1i(pr.u.uCN, w.CN);
+  bindSpecies(pr, w.cur, 0); gl.uniform1i(pr.u.uCN, w.CN);
   gl.uniform1f(pr.u.uZoom, cam.zoom); gl.uniform2f(pr.u.uCam, cam.x, cam.y);
   gl.uniform1f(pr.u.uHueSens, S.hue_sensitivity); gl.uniform1i(pr.u.uWater, S.watercolor_mode ? 1 : 0);
-  gl.uniform1i(pr.u.uByCohort, S.color_by_cohort ? 1 : 0); gl.uniform1f(pr.u.uCohortHue, cohortHue(look.brain));
+  gl.uniform1i(pr.u.uByCohort, S.color_by_cohort ? 1 : 0);
+  gl.uniform1fv(pr.u.uSpHue, [0,1,2,3].map(s => cohortHue((look.brain + s) % S.num_cohorts)));
   gl.uniform1i(pr.u.uSmooth, look.smooth ? 1 : 0);
   target(D.sampleF); gl.drawArrays(gl.TRIANGLES, 0, 3);
   pr = P.accum; gl.useProgram(pr.p);
@@ -653,10 +699,13 @@ function measureJumps(){
 
 // total mass, read back now and then: it must not move
 function measureMass(){
-  const w = W, buf = new Float32Array(w.CN*w.CN*4);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, w.stateF[w.cur]); gl.readBuffer(gl.COLOR_ATTACHMENT0);
-  gl.readPixels(0, 0, w.CN, w.CN, gl.RGBA, gl.FLOAT, buf);
-  let m = 0, occ = 0; for(let i = 0; i < buf.length; i += 4){ m += buf[i]; if(buf[i] > 1e-6) occ++; }
+  const w = W, n = w.CN*w.CN, buf = new Float32Array(n*4), tot = new Float32Array(n);
+  for(let s = 0; s < NS(); s++){
+    gl.bindFramebuffer(gl.FRAMEBUFFER, w.stateF[s][w.cur]); gl.readBuffer(gl.COLOR_ATTACHMENT0);
+    gl.readPixels(0, 0, w.CN, w.CN, gl.RGBA, gl.FLOAT, buf);
+    for(let i = 0; i < n; i++) tot[i] += buf[4*i];
+  }
+  let m = 0, occ = 0; for(let i = 0; i < n; i++){ m += tot[i]; if(tot[i] > 1e-6) occ++; }
   w.mass = m; w.occ = occ/(w.CN*w.CN);
 }
 
@@ -750,6 +799,7 @@ rowSlider(gS, "num_cohorts", "cohorts", 1, 144, 1, S, () => { S.num_cohorts = Ma
 rowSlider(gS, "spread", "spread (cells)", 1, 5, 0.05, look);
 rowSlider(gS, "pressure", "pressure", 0, 2, 0.01, look);
 rowSlider(gS, "rest", "rest (× mean)", 0, 10, 0.05, look);
+rowSlider(gS, "species", "species", 1, 4, 1, look, () => { look.species = NS(); frame = 0; });
 rowSlider(gS, "brain", "brain (cohort)", 0, 143, 1, look, () => { look.brain = Math.max(0, Math.min(S.num_cohorts-1, Math.round(look.brain))); });
 rowSelect(gS, "initial_conditions", "start", ["grid", "random", "ring"], S);
 rowSelect(gS, "boundary_conditions", "edges", ["bounce", "reset", "wrap"], S);
@@ -757,7 +807,7 @@ rowSelect(gS, "absolute_orientation", "orientation", ["velocity", "up (y axis)",
 rowSlider(gS, "orientation_mix", "orient. mix", 0, 1, 0.01, S);
 rowCheck(gS, "disable_symmetry", "disable left/right symmetry", S);
 rowSlider(gL, "hue_sensitivity", "hue sens.", -2, 2, 0.001, S);
-rowCheck(gL, "color_by_cohort", "colour by cohort", S);
+rowCheck(gL, "color_by_cohort", "colour by species", S);
 rowCheck(gL, "watercolor_mode", "watercolour", S);
 rowSlider(gL, "speed", "steps/frame", 1, 30, 1, look);
 rowSlider(gL, "brightness", "brightness", 0.2, 10, 0.01, look);
@@ -785,7 +835,7 @@ caSel.addEventListener("change", () => { if(caSel.value === "") return; sel.sele
 // mutation seed, the grid knobs and the look. The working state is also kept as you go, so a
 // refresh comes back to exactly this.
 const KEY_SAVED = "fluoddity-ca:saved", KEY_CURRENT = "fluoddity-ca:current";
-const LOOK_KEYS = ["spread", "pressure", "rest", "brain", "speed", "brightness", "bloom", "motion_blur", "smooth", "world_size_i"];
+const LOOK_KEYS = ["spread", "pressure", "rest", "brain", "species", "speed", "brightness", "bloom", "motion_blur", "smooth", "world_size_i"];
 const mySel = $("my-preset"), myName = $("my-name");
 function readStore(k, dflt){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : dflt; } catch(e){ return dflt; } }
 function writeStore(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch(e){ return false; } }
@@ -815,22 +865,25 @@ function defaultName(){
   let n = 1; while(saved.some(c => c.name === `${base} ${n}`)) n++;
   return `${base} ${n}`;
 }
+// Ctrl+S always makes a NEW preset; replacing one is the explicit "overwrite" button
 function saveMine(){
-  const sel_i = mySel.value === "" ? -1 : +mySel.value;
   let name = myName.value.trim();
-  const entry = {...snapshot(), saved: new Date().toISOString()};
-  let i;
-  if(sel_i >= 0 && (name === "" || name === saved[sel_i].name)){   // same name: overwrite the selected one
-    entry.name = saved[sel_i].name; saved[sel_i] = entry; i = sel_i;
-  } else {
-    if(name === "" || saved.some(c => c.name === name)) name = name === "" ? defaultName() : name + " 2";
-    entry.name = name; saved.push(entry); i = saved.length - 1;
-  }
-  source = {kind: "my", name: entry.name}; saved[i].source = source;
+  if(name === "" || saved.some(c => c.name === name)) name = defaultName();
+  const entry = {...snapshot(), saved: new Date().toISOString(), name};
+  source = {kind: "my", name}; entry.source = source;
+  saved.push(entry);
   const ok = writeStore(KEY_SAVED, saved);
-  fillMine(i); sel.selectedIndex = -1; caSel.value = "";
-  myName.value = entry.name; myName.focus(); myName.select();     // type to rename, Enter to keep
-  flash(ok ? `saved "${entry.name}"` : "could not save: browser storage is blocked");
+  fillMine(saved.length - 1); sel.selectedIndex = -1; caSel.value = "";
+  myName.value = name; myName.focus(); myName.select();     // type to rename, Enter to keep
+  flash(ok ? `saved "${name}"` : "could not save: browser storage is blocked");
+}
+function overwriteMine(){
+  const i = mySel.value === "" ? -1 : +mySel.value;
+  if(i < 0){ flash("pick one of your presets to overwrite"); return; }
+  const name = saved[i].name;
+  saved[i] = {...snapshot(), saved: new Date().toISOString(), name, source: {kind: "my", name}};
+  source = saved[i].source;
+  flash(writeStore(KEY_SAVED, saved) ? `overwrote "${name}"` : "could not save: browser storage is blocked");
 }
 function renameMine(){
   const i = mySel.value === "" ? -1 : +mySel.value, name = myName.value.trim();
@@ -845,7 +898,7 @@ mySel.addEventListener("change", () => {
 });
 myName.addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); renameMine(); myName.blur(); } });
 myName.addEventListener("change", renameMine);
-$("b-save").onclick = saveMine;
+$("b-save").onclick = saveMine; $("b-over").onclick = overwriteMine;
 $("b-del").onclick = () => {
   const i = mySel.value === "" ? -1 : +mySel.value; if(i < 0) return;
   const name = saved[i].name; saved.splice(i, 1); writeStore(KEY_SAVED, saved); fillMine(-1); myName.value = ""; flash(`deleted "${name}"`);

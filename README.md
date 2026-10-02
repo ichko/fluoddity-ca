@@ -78,6 +78,10 @@ The original Fluoddity has neither of these. Both are in `fluoddity-ca-next.html
 
   ![pressure](img/ca_pressure.png)
 
+- **Species.** A cohort can be its own field: its own mass, velocity and brain (one row of the rule table each). Species never see each other directly. They meet in the shared trail, which all of them write to and read from, and, with pressure on, in the crowding, which is counted over all of them. Up to 4; 1 is the plain model.
+
+  ![species](img/ca_species.png)
+
 ### A family of its own
 
 A novelty search over the CA's settings found 24 new presets. It started from Fluoddity's presets with random spread, pressure, rest and brain choice, then mutated them slowly: a few settings at a time, small nudges to the 80 brain numbers. Each candidate was scored on 13 measurements (how much of the grid is occupied, how clumped the mass is, structure size, how stringy it is, how much it moves, hue spread, blob count and so on). Dead, static, uniform and exploding runs were thrown out, and parents were chosen for novelty × quality. In all it evaluated 194 candidates in about 4 hours. They are the **CA family** dropdown in `fluoddity-ca-next.html`; the search scripts are in `tools/search/`.
