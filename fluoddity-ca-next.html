@@ -77,6 +77,7 @@ body.hidep #toggle{display:block}
       <label class="sel" style="margin-top:6px"><span>CA family</span><select id="ca-preset"><option value="">—</option></select></label>
       <label class="sel"><span>my presets</span><select id="my-preset"><option value="">—</option></select></label>
       <div class="mine"><input id="my-name" type="text" placeholder="name for Ctrl+S" aria-label="preset name" spellcheck="false"><button id="b-save" type="button" title="Ctrl+S: always a new preset">save new</button><button id="b-over" type="button" title="replace the selected preset with the current settings">overwrite</button><button id="b-del" type="button" title="delete the selected preset">delete</button></div>
+      <div class="btns"><button id="b-export" type="button" title="download all your presets as one JSON file">export my presets</button><button id="b-import" type="button" title="add presets from an exported JSON file">import</button><input id="f-import" type="file" accept=".json,application/json" hidden></div>
       <div class="btns">
         <button id="b-reset" type="button" title="R">reset</button>
         <button id="b-mutate" type="button" title="M">new mutations</button>
@@ -900,6 +901,34 @@ mySel.addEventListener("change", () => {
 myName.addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); renameMine(); myName.blur(); } });
 myName.addEventListener("change", renameMine);
 $("b-save").onclick = saveMine; $("b-over").onclick = overwriteMine;
+// export: every saved preset in one JSON file; import adds them back (renaming clashes)
+$("b-export").onclick = () => {
+  if(!saved.length){ flash("nothing saved yet: Ctrl+S saves the current settings"); return; }
+  const blob = new Blob([JSON.stringify({kind: "fluoddity-ca presets", version: 1, presets: saved}, null, 1)], {type: "application/json"});
+  const a = document.createElement("a"), d = new Date();
+  a.href = URL.createObjectURL(blob);
+  a.download = `fluoddity-ca-presets-${d.toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  flash(`exported ${saved.length} preset${saved.length === 1 ? "" : "s"}`);
+};
+$("b-import").onclick = () => $("f-import").click();
+$("f-import").addEventListener("change", async e => {
+  const file = e.target.files[0]; e.target.value = "";
+  if(!file) return;
+  try {
+    const d = JSON.parse(await file.text());
+    const list = Array.isArray(d) ? d : d.presets;
+    let n = 0;
+    for(const c of list || []){
+      if(!c || !c.S || !c.rule || c.rule.length !== 80) continue;
+      let name = c.name || "imported", k = 2; while(saved.some(x => x.name === name)) name = `${c.name || "imported"} (${k++})`;
+      saved.push({...c, name, source: {kind: "my", name}}); n++;
+    }
+    writeStore(KEY_SAVED, saved); fillMine(saved.length - 1);
+    flash(n ? `imported ${n} preset${n === 1 ? "" : "s"}` : "no presets found in that file");
+  } catch(err){ flash("could not read that file: it is not a presets export"); }
+});
 $("b-del").onclick = () => {
   const i = mySel.value === "" ? -1 : +mySel.value; if(i < 0) return;
   const name = saved[i].name; saved.splice(i, 1); writeStore(KEY_SAVED, saved); fillMine(-1); myName.value = ""; flash(`deleted "${name}"`);
