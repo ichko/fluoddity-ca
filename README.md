@@ -54,10 +54,10 @@ step():
 The same model with the particles replaced by fields, built up one piece at a time.
 
 1. **Grids.**
-   - Trail `float[H, W, 2]`, as in Fluoddity.
-   - Velocity `float[H, W, 2]`: the "particle" in each cell.
-   - Mass `float[H, W, 1]`: how many particles' worth of stuff the cell holds.
-2. **Brain.** Fluoddity's, unchanged, with the mirror trick. The whole grid runs one cohort's brain.
+   - Trail `float[H, W, 2]`: one, **shared**, as in Fluoddity.
+   - **Per cohort:** a velocity `float[H, W, 2]`, the "particle" of that cohort in each cell, and a mass `float[H, W, 1]`, how many particles' worth of it the cell holds.
+   - Each cohort is its own channel. Cohorts never see each other directly; they interact only through the trail, which every cohort writes its momentum into and reads with its eyes.
+2. **Brain.** Fluoddity's, unchanged, with the mirror trick. There is one per cohort, its own mutated row of the rule table.
 3. **Perception.** Two eye kernels at Fluoddity's defaults: 2.56 × `sensor_distance` cells out, at ±`sensor_angle`·π from the cell's velocity. Each is a single bilinear tap, which is close to a σ ≈ 0.4 Gaussian. Projected onto the velocity and its perpendicular, they give the brain's 4 inputs.
 4. **Force.** Not scaled by mass, as in Fluoddity. An empty cell computes a force but carries nothing, so it acts like no particle.\*
 5. **Velocity.** `vel = vel·drag + force`.

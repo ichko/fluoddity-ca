@@ -98,8 +98,13 @@ step():
 <p>Each step of the conversion kept Fluoddity's constants, so the two run the same presets.</p>
 
 <ol class="stages">
-  <li><b>Grids.</b> A trail <code>float[H,W,2]</code>, as in Fluoddity. A velocity <code>float[H,W,2]</code>: the "particle" living in each cell. A mass <code>float[H,W,1]</code>, counted in particles.</li>
-  <li><b>Brain.</b> Fluoddity's, unchanged, with the mirror trick. One cohort's brain drives the whole grid.</li>
+  <li><b>Grids.</b>
+    <ul>
+      <li>One <b>shared</b> trail <code>float[H,W,2]</code>, as in Fluoddity.</li>
+      <li><b>Per cohort</b>, a velocity <code>float[H,W,2]</code> (the "particle" of that cohort living in each cell) and a mass <code>float[H,W,1]</code>, counted in particles.</li>
+    </ul>
+    Each cohort is its own channel of the CA. Cohorts never see each other directly; they interact only through the trail, which every cohort writes its momentum into and reads with its eyes.</li>
+  <li><b>Brain.</b> Fluoddity's, unchanged, with the mirror trick. There is one per cohort, its own mutated row of the rule table.</li>
   <li><b>Perception.</b> Two eye kernels at Fluoddity's defaults: 2.56 × <code>sensor_distance</code> cells out, at ±<code>sensor_angle</code>·π from the cell's velocity. Each is one bilinear tap, which is close to a σ ≈ 0.4 Gaussian. Projected onto the velocity and its perpendicular, they give the brain's four inputs.
     <figure><img src="img/kernel3.png" alt="The two eye kernels"><figcaption>The two eyes at the defaults: Fluoddity's exact bilinear reading on top, the matching Gaussian below.</figcaption></figure>
   </li>
