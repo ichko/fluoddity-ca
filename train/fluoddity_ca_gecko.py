@@ -630,6 +630,15 @@ def main():
     ap.add_argument("--eval_every", type=int, default=25, help="pool training: long evaluation from the seed every N its")
     ap.add_argument("--rollback", type=float, default=1.25, help="if the running loss passes this x best, reload best and halve lr (0 = off)")
     ap.add_argument("--ckpt_min", type=float, default=10.0, help="save params+optimizer+iteration every this many minutes")
+    ap.add_argument("--damage", type=int, default=0, help="pool: at most K grown samples of each batch get a random disc cut (Growing NCA exp. 3)")
+    ap.add_argument("--damage_r", default="10,26", help="radius range of the cut disc, in cells")
+    ap.add_argument("--damage_p", type=float, default=0.5, help="chance that an eligible sample is cut")
+    ap.add_argument("--damage_age", type=int, default=96, help="only samples at least this old are cut")
+    ap.add_argument("--damage_gap", type=int, default=128, help="steps after a cut before the same sample can be cut again")
+    ap.add_argument("--damage_protect", type=int, default=128, help="steps after a cut during which a sample is not sent back to the seed for being the worst")
+    ap.add_argument("--reinject", default="scale", choices=["scale", "edge", "seed", "none"], help="what happens to the cut mass (see damage_state)")
+    ap.add_argument("--state_noise", type=float, default=0.0, help="pool: per-cell noise on grown samples' velocity (relative) and hidden (absolute)")
+    ap.add_argument("--wdmg", type=float, default=0.0, help="selection: score = (undamaged + wdmg * damage_eval) / (1 + wdmg); >0 also runs the damage eval")
     ap.add_argument("--opt", default="grad", choices=["grad", "es"],
                     help="grad: backprop through the damped unroll; es: antithetic evolution strategy (no gradient)")
     ap.add_argument("--es_pop", type=int, default=12, help="antithetic pairs per ES generation")
@@ -885,6 +894,99 @@ def long_eval(model, a, tgt, total, steps=(96, 160, 300, 500)):
     return r
 
 
+# ---------------------------------------------------------------- damage (Growing NCA, experiment 3)
+def damage_state(model, S, T, cut, total, reinject="scale"):
+    """cut [n*n] in [0,1]: the fraction of each cell removed. Every per-cell number goes with it
+    (mass, momentum, hidden, paint: all are carried mass-weighted, so S * (1 - cut)), and the
+    trail under the cut is zeroed too, so nothing at the wound remembers what was there.
+    Mass is conserved by the step, so what is cut is gone for good unless it comes back:
+      scale  the remaining cells are scaled by total / remaining, every channel alike, so each
+             keeps its velocity, hidden and paint per unit mass and is only denser. The added
+             mass carries no hint of where the wound is; pressure (rest density) pushes the
+             excess outwards, into the hole, and the brain has to finish the shape.
+      edge   the lost mass goes back into the body cells within EDGE_W cells of the wound (each
+             scaled up, keeping its velocity, hidden and paint per unit mass): a dense band at the
+             cut, like a blastema; pressure pushes it into the hole, the brain shapes it
+      seed   the removed mass comes back as a seed (the learned seed disc, velocity, hidden and
+             paint) at the centre, added to whatever is there.
+      none   gone (the target is then unreachable)."""
+    keep = 1.0 - cut
+    S2 = S * keep[None]; T2 = T * keep[None]
+    if reinject == "scale":
+        S2 = S2 * (total / S2[0].sum().clamp_min(1e-12))
+    elif reinject == "edge":   # back into the body cells within `EDGE_W` cells of the wound, ~ their mass
+        n = model.N
+        c2 = (cut > 0.5).float().reshape(1, 1, n, n)
+        k = 2 * EDGE_W + 1
+        near = F.max_pool2d(F.pad(c2, (EDGE_W,) * 4, mode="circular"), k, 1).reshape(-1)
+        w = S2[0] * near * (1 - (cut > 0.5).float())
+        if float(w.sum()) <= 1e-9: w = S2[0]
+        lost = total - S2[0].sum()
+        S2 = S2 * (1 + lost * w / w.sum() / S2[0].clamp_min(1e-12))[None]
+    elif reinject == "seed":
+        lost = total - float(S2[0].sum())
+        if lost > 0: S2 = S2 + model.init_state(lost)[0]
+    return S2, T2
+
+
+EDGE_W = 6
+
+
+def disc_cut(model, cx, cy, r):
+    d = torch.sqrt((model.xf - cx) ** 2 + (model.yf - cy) ** 2)
+    return (r + 0.5 - d).clamp(0, 1)
+
+
+def random_disc_cut(model, S, ra, rb, gen=None, max_frac=0.35):
+    """a disc of radius U(ra, rb) cells centred on a cell drawn with probability ~ its mass
+    (so on the body); re-drawn smaller if it would take more than max_frac of the mass"""
+    m = S[0].clamp_min(0)
+    j = int(torch.multinomial(m / m.sum(), 1, generator=gen))
+    cx, cy = float(model.xf[j]), float(model.yf[j])
+    r = ra + (rb - ra) * float(torch.rand(1, generator=gen))
+    for _ in range(8):
+        cut = disc_cut(model, cx, cy, r)
+        if float((m * cut).sum() / m.sum()) <= max_frac: break
+        r *= 0.8
+    return cut, (cx, cy, r)
+
+
+def std_damages(model, a):
+    """the standard cuts of the robustness benchmark, fixed in target-picture coordinates
+    (x right, y up, 0..127; the picture sits in the middle of the grid): fraction of the
+    target's mass in brackets"""
+    z = getattr(a, "zoom", 1); n = model.N; o = (n - 128 * z) // 2
+    X = (model.xf - o) / z; Y = (model.yf - o) / z
+    g = torch.Generator().manual_seed(1234)
+    return {
+        "tail": ((X >= 76) & (X < 128) & (Y >= 0) & (Y <= 30)).float(),                              # the tail curl (12.5%)
+        "head": ((X >= 0) & (X <= 56) & (Y >= 88) & (Y < 128)).float(),                              # the head (18.7%)
+        "disc24": ((torch.sqrt((X - 72) ** 2 + (Y - 60) ** 2) <= 12)).float(),  # a 24-cell-wide hole in the body (10%)
+        "rand30": (torch.rand(n * n, generator=g) < 0.3).float(),             # 30% of the cells, salt-and-pepper
+    }
+
+
+def damage_eval(model, a, tgt, total, t_dmg=200, after=(50, 100), reinject="scale", grown=None):
+    """grow to t_dmg, apply each standard cut, run on; mass ms_loss at t_dmg + each of `after`"""
+    with torch.no_grad():
+        if grown is None:
+            _, S, T = model.run(total, t_dmg, ckpt=False)
+        else:
+            S, T = grown
+        r = {}
+        for nm, cut in std_damages(model, a).items():
+            S2, T2 = damage_state(model, S, T, cut, total, reinject)
+            out, _, _ = model.run(total, max(after), keep=set(after), ckpt=False, state=(S2, T2))
+            r[nm] = {k: round(float(ms_loss(view(a, out[k]), view(a, tgt))), 4) for k in after}
+    return r
+
+
+def damage_score(r):
+    v = [x for d in r.values() for x in d.values()]
+    v = [x if math.isfinite(x) else 1e3 for x in v]
+    return sum(v) / len(v)
+
+
 def eval_score(r):
     """one number from long_eval: mean over the steps of mass (+ colour) loss"""
     v = [sum(x) if isinstance(x, tuple) else x for x in r.values()]
@@ -915,23 +1017,35 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
     ckp = os.path.join(HERE, f"fca_gecko_{a.tag}.pt")
     pool = [None] * a.pool          # None = a fresh seed
     ages = [0] * a.pool
+    cut_at = [-1] * a.pool          # age at the last cut, -1 = never cut
+    dmg_r = [float(x) for x in str(getattr(a, "damage_r", "10,26")).split(",")]
+    dgen = torch.Generator().manual_seed(a.seed + 77)
+    wdmg = getattr(a, "wdmg", 0.0)
+    def evaluate():
+        r = long_eval(model, a, tgt, total); su = eval_score(r)
+        if wdmg <= 0: return r, su, None, su
+        rd = damage_eval(model, a, tgt, total, reinject=a.reinject if a.reinject != "none" else "scale"); sd = damage_score(rd)
+        return r, su, rd, (su + wdmg * sd) / (1 + wdmg)
     best, best_state, it0, hist, lr_scale, best_it, evals = 1e9, None, 0, [], 1.0, 0, []
     if ck is not None:
         opt.load_state_dict(ck["opt"]); best, best_state = ck["best"], ck["state"]
         it0, hist = ck["it"] + 1, ck.get("hist", [])
         lr_scale, best_it, evals = ck.get("lr_scale", 1.0), ck.get("best_it", ck["it"]), ck.get("evals", [])
         if "pool" in ck: pool, ages = ck["pool"], ck["ages"]
+        if "cut_at" in ck: cut_at = ck["cut_at"]
+        if "dgen" in ck: dgen.set_state(ck["dgen"])
         if "rng" in ck: torch.set_rng_state(ck["rng"])
     def checkpoint_now(it):
         save_ckpt(ckp, preset=name, state=best_state, cur={k: v.detach().clone() for k, v in model.state_dict().items()},
                   opt=opt.state_dict(), it=it, best=best, hist=hist, args=vars(a), rng=torch.get_rng_state(), kind="pool",
-                  lr_scale=lr_scale, best_it=best_it, pool=pool, ages=ages, evals=evals)
+                  lr_scale=lr_scale, best_it=best_it, pool=pool, ages=ages, evals=evals, cut_at=cut_at, dgen=dgen.get_state())
     if ck is None:
-        r = long_eval(model, a, tgt, total); best = eval_score(r); best_it = 0
+        r, su, rd, best = evaluate(); best_it = 0
         best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
-        evals.append((0, r))
+        evals.append((0, r) if rd is None else (0, r, rd))
         say(f"pool {a.pool} x{a.batch}, segments {a.seg_min}..{a.seg_max}, score every {a.score_every}, "
-            f"age cap {a.t1 + a.hold}->{a.max_age} over {a.age_ramp} its; before: {r} score {best:.4f}")
+            f"age cap {a.t1 + a.hold}->{a.max_age} over {a.age_ramp} its; before: {r} score {su:.4f}"
+            + (f"; damaged: {rd} score {damage_score(rd):.4f}; selection score {best:.4f}" if rd is not None else ""))
     cap = lambda it: int(a.t1 + a.hold + (a.max_age - a.t1 - a.hold) * min(1.0, it / max(a.age_ramp, 1)))
     t_start = t_ck = time.time(); it = it0 - 1
     for it in range(it0, iters):
@@ -943,11 +1057,25 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
         idx = torch.randperm(a.pool)[:a.batch].tolist()
         with torch.no_grad():   # the worst of the batch goes back to the seed, and anything past the age cap
             cur = [float(frame_loss(model, pool[i][0], tgt, trgb, a)[0]) if pool[i] is not None else 1e9 for i in idx]
-        worst = idx[int(np.argmax(cur))]
-        pool[worst], ages[worst] = None, 0
+        # a sample still regrowing from a cut is not sent back for being the worst (it is the point)
+        healthy = [k for k, i in enumerate(idx) if cut_at[i] < 0 or ages[i] - cut_at[i] >= getattr(a, "damage_protect", 0)]
+        if healthy:
+            worst = idx[max(healthy, key=lambda k: cur[k])]
+            pool[worst], ages[worst], cut_at[worst] = None, 0, -1
         for i in idx:
-            if ages[i] > cap(it): pool[i], ages[i] = None, 0
-        opt.zero_grad(); info = []
+            if ages[i] > cap(it): pool[i], ages[i], cut_at[i] = None, 0, -1
+        cuts = []
+        if getattr(a, "damage", 0):   # Growing NCA exp. 3: cut the best of the grown ones, give the mass back
+            elig = sorted([k for k, i in enumerate(idx) if pool[i] is not None and ages[i] >= a.damage_age
+                           and (cut_at[i] < 0 or ages[i] - cut_at[i] >= a.damage_gap)], key=lambda k: cur[k])
+            for k in elig[:a.damage]:
+                if float(torch.rand(1, generator=dgen)) >= a.damage_p: continue
+                i = idx[k]
+                cut, (cx, cy, r) = random_disc_cut(model, pool[i][0], dmg_r[0], dmg_r[1], dgen)
+                fr = float((pool[i][0][0] * cut).sum()) / total
+                pool[i] = damage_state(model, pool[i][0], pool[i][1], cut, total, a.reinject)
+                cut_at[i] = ages[i]; cuts.append(f"cut r{r:.0f} {fr:.0%}")
+        opt.zero_grad(); info = [] + cuts
         tot_loss, ok = 0.0, True
         for i in idx:
             age = ages[i]
@@ -957,6 +1085,13 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
                 keep = {k for k in range(a.t0, L + 1) if k % 8 == 0 or k == L}
             else:
                 st = (pool[i][0].clone(), pool[i][1].clone())
+                if getattr(a, "state_noise", 0) > 0:   # mass untouched (conserved); velocity x (1 + s N), hidden + s N
+                    S0, sn = st[0], a.state_noise
+                    mm = S0[0].clamp_min(1e-12)
+                    S0[1:3] = S0[1:3] * (1 + sn * torch.randn(2, S0.shape[1], generator=dgen))
+                    if model.Hd:
+                        hh = (S0[3:3 + model.Hd] / mm + sn * torch.randn(model.Hd, S0.shape[1], generator=dgen)).clamp(-0.99, 0.99)
+                        S0[3:3 + model.Hd] = hh * S0[0]
                 L = int(torch.randint(a.seg_min, a.seg_max + 1, (1,)))
                 keep = {k for k in range(1, L + 1) if k % a.score_every == 0 or k == L}
             out, S, T = model.run(total, L, keep=keep, full=True, state=st)
@@ -966,11 +1101,11 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
             (loss / len(idx)).backward()
             pool[i] = (S.detach(), T.detach()); ages[i] = age + L
             lm = float(sum(p[1] for p in parts) / len(parts)); lc = float(sum(p[2] for p in parts) / len(parts))
-            info.append(f"{'seed' if age == 0 else age}->{age + L}: {lm:.3f}" + (f"/{lc:.3f}" if has_col(a) else ""))
+            info.append(f"{'seed' if age == 0 else age}->{age + L}{'*' if cut_at[i] >= 0 else ''}: {lm:.3f}" + (f"/{lc:.3f}" if has_col(a) else ""))
             tot_loss += float(loss) / len(idx)
         if not ok:
             say(f"it {it}: non-finite loss, back to best, pool reset"); opt.zero_grad()
-            model.load_state_dict(best_state); pool = [None] * a.pool; ages = [0] * a.pool
+            model.load_state_dict(best_state); pool = [None] * a.pool; ages = [0] * a.pool; cut_at = [-1] * a.pool
             continue
         gn = 0.0
         for g in opt.param_groups:
@@ -985,7 +1120,7 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
             say(f"it {it:5d} loss {tot_loss:.4f} [{'; '.join(info)}] gn {gn:.1e} maxage {max(ages)} cap {cap(it)} "
                 f"lr {opt.param_groups[0]['lr']:.2e} {time.time() - t:.1f}s/it")
         if it % a.eval_every == 0 and it > 0:
-            r = long_eval(model, a, tgt, total); sc = eval_score(r); evals.append((it, r))
+            r, su, rd, sc = evaluate(); evals.append((it, r) if rd is None else (it, r, rd))
             tag = ""
             annealing = getattr(a, "spread_to", 0) > 0 and it < a.spread_anneal   # only states at the final spread can be best
             if annealing: tag = " (annealing spread)"
@@ -993,9 +1128,10 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
                 best, best_it = sc, it; best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}; tag = " NEW BEST"
             elif a.rollback and it - best_it > 4 * a.eval_every and sc > best * a.rollback:
                 model.load_state_dict(best_state); opt.state.clear(); lr_scale *= 0.5; best_it = it
-                pool = [None] * a.pool; ages = [0] * a.pool
+                pool = [None] * a.pool; ages = [0] * a.pool; cut_at = [-1] * a.pool
                 tag = f" -> back to best, lr x{lr_scale:.3g}, pool reset"
-            say(f"eval it {it}: {r} score {sc:.4f} (best {best:.4f} at {best_it}){tag}")
+            dm = "" if rd is None else f" undamaged {su:.4f} damaged {damage_score(rd):.4f} {rd}"
+            say(f"eval it {it}: {r}{dm} score {sc:.4f} (best {best:.4f} at {best_it}){tag}")
         if time.time() - t_ck > a.ckpt_min * 60:
             checkpoint_now(it); t_ck = time.time()
         if it % 100 == 0 and it > it0 and best_state is not None:

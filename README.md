@@ -114,6 +114,10 @@ The loss is multiscale MSE scaled so that predicting nothing scores 1.0. For com
 
 **Latest: stable and in colour.** Sample-pool training (one-cell move, a pixel-level loss term) makes the shape hold. The mass loss at steps 96, 160, 300 and 500 is now 0.083, 0.090, 0.108 and 0.131, against 0.100, 0.135, 0.191 and 0.238 before. Colour is learned as three channels carried along with the mass, trained on top of those dynamics, with a colour loss of 0.07 throughout. The gecko is green with a yellow belly and dark eyes. It doesn't yet have the red spots, toes or crisp edges.
 
+**Robustness.** Training with damage (grown geckos in the pool get a disc of 8–22 cells wiped from every channel, trail included, with the lost mass put back at the wound's edge) gave a better gecko overall: mass loss 0.059 / 0.064 / 0.080 / 0.101 at steps 96 / 160 / 300 / 500, colour loss 0.043 throughout. It does **not** regenerate. A hole in the body half-closes and stops, and a cut head becomes a stump, in the old model and the new one alike. The grown gecko is a frozen solid: a cut is neutrally stable rather than pulled back to the shape. Real regrowth would probably need damage in the curriculum from scratch, or dynamics that keep moving. `gecko.html` now runs this model.
+
+![regeneration](train/fca_gecko_regen_strip.png)
+
 A sub-pixel version (the simulation at 2× resolution, scored on 2×2 averages) didn't work when warm-started: the dynamics don't survive the change of scale. It would need training from scratch at about 4× the compute.
 
 **What draws the gecko.** Neither the brain nor the learned launch velocity does it alone:

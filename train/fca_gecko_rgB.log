@@ -1,0 +1,245 @@
+== rgB {'tag': 'rgB', 'grid': 256, 'preset': 'auto', 'screen_top': 3, 'screen_iters': 40, 'mut_mult': 1.0, 'absori': -1, 'centres': 10, 'see_mass': True, 'hidden': 6, 'extra_amp': 0.05, 'extra_freq': 0.01, 'spread': 1.0, 'train_spread': 0, 'spread_to': 0, 'spread_anneal': 100, 'pressure': 0.3, 'train_pressure': 1, 'press_mode': 0, 'rest': 0.5, 'max_spread': 1.0, 'seed_r': 12.0, 'seed_vel': 'radial', 'seed_speed': 0.002, 'learn_seed_v': 1, 'learn_seed_h': 1, 'seed_lowres': 0, 'ori_eps': 0.01, 'gdamp': 1.0, 'zoom': 1, 'trail_reps': 0, 'luma': False, 'mass_scale': 1.0, 't0': 48, 't1': 80, 'hold': 16, 'iters': 1500, 'lr': 0.0004, 'lr_seed': 0.01, 'clip': 1.0, 'threads': 1, 'seed': 0, 'resume': 'auto', 'init_from': 'fca_gecko_dynD.pt', 'hours': 7.0, 'colour': False, 'wcol': 0.5, 'hue_sens': None, 'hue_off': 0.33, 'train_hue_off': 1, 'rgb': False, 'brake': True, 'lr_brake': 0.02, 'brake_init': 5.0, 'paint': -1, 'paint_w': 64, 'freeze_dyn': False, 'wpix': 0.5, 'batch': 2, 'max_age': 500, 'age_ramp': 50, 'pool': 32, 'seg_min': 16, 'seg_max': 32, 'score_every': 4, 'eval_every': 25, 'rollback': 1.25, 'ckpt_min': 10.0, 'damage': 1, 'damage_r': '10,24', 'damage_p': 0.5, 'damage_age': 96, 'damage_gap': 128, 'damage_protect': 128, 'reinject': 'scale', 'state_noise': 0.02, 'wdmg': 1.0, 'opt': 'grad', 'es_pop': 12, 'es_sigma': 0.03, 'es_lr': 0.02, 'es_seed': 1}
+warm start from fca_gecko_dynD.pt (Worms, best 0.10292499999999999)
+start from preset Worms; params 6422
+pool 32 x2, segments 16..32, score every 4, age cap 96->500 over 50 its; before: {96: 0.0828, 160: 0.0896, 300: 0.108, 500: 0.1313} score 0.1029; damaged: {'tail': {50: 0.1989, 100: 0.2039}, 'head': {50: 0.308, 100: 0.3116}, 'disc24': {50: 0.1928, 100: 0.195}, 'rand30': {50: 0.1256, 100: 0.1242}} score 0.2075; selection score 0.1552
+it     0 loss 0.1741 [seed->76: 0.090; seed->52: 0.101] gn 6.8e+02 maxage 76 cap 96 lr 2.00e-05 17.6s/it
+it    10 loss 0.2032 [seed->78: 0.106; seed->50: 0.121] gn 1.2e+03 maxage 115 cap 176 lr 2.20e-04 10.0s/it
+it    20 loss 0.2168 [cut r11 6%; seed->65: 0.114; 97->129*: 0.137] gn 1.9e+02 maxage 146 cap 257 lr 4.00e-04 9.1s/it
+eval it 25: {96: 0.1138, 160: 0.1179, 300: 0.1341, 500: 0.1565} undamaged 0.1306 damaged 0.2277 {'tail': {50: 0.2121, 100: 0.218}, 'head': {50: 0.3257, 100: 0.328}, 'disc24': {50: 0.2192, 100: 0.2203}, 'rand30': {50: 0.1492, 100: 0.1488}} score 0.1791 (best 0.1552 at 0)
+it    30 loss 0.1912 [seed->84: 0.110; 71->94: 0.108] gn 2.8e+02 maxage 146 cap 338 lr 4.00e-04 8.7s/it
+it    40 loss 0.1978 [117->149: 0.098; seed->74: 0.128] gn 2.9e+02 maxage 204 cap 419 lr 3.99e-04 8.8s/it
+it    50 loss 0.2015 [84->115: 0.108; seed->85: 0.122] gn 1.7e+02 maxage 204 cap 500 lr 3.99e-04 9.0s/it
+eval it 50: {96: 0.1205, 160: 0.1262, 300: 0.1437, 500: 0.1667} undamaged 0.1393 damaged 0.2339 {'tail': {50: 0.2244, 100: 0.2297}, 'head': {50: 0.3241, 100: 0.3269}, 'disc24': {50: 0.2286, 100: 0.2301}, 'rand30': {50: 0.1529, 100: 0.1542}} score 0.1866 (best 0.1552 at 0)
+it    60 loss 0.1940 [119->136: 0.112; seed->73: 0.110] gn 1.8e+02 maxage 204 cap 500 lr 3.99e-04 7.8s/it
+it    70 loss 0.1863 [seed->94: 0.117; 89->121: 0.096] gn 2.7e+02 maxage 255 cap 500 lr 3.98e-04 10.2s/it
+eval it 75: {96: 0.0983, 160: 0.1008, 300: 0.1128, 500: 0.1313} undamaged 0.1108 damaged 0.2123 {'tail': {50: 0.2073, 100: 0.2099}, 'head': {50: 0.3136, 100: 0.3154}, 'disc24': {50: 0.1996, 100: 0.1988}, 'rand30': {50: 0.1278, 100: 0.1262}} score 0.1616 (best 0.1552 at 0)
+it    80 loss 0.2950 [cut r20 15%; seed->55: 0.118; 156->188*: 0.236] gn 2.4e+02 maxage 255 cap 500 lr 3.97e-04 7.6s/it
+it    90 loss 0.3783 [118->150*: 0.240; 188->219*: 0.233] gn 5.1e-02 maxage 219 cap 500 lr 3.97e-04 6.9s/it
+it   100 loss 0.1826 [77->93: 0.101; seed->94: 0.106] gn 2.8e+02 maxage 272 cap 500 lr 3.96e-04 10.0s/it
+eval it 100: {96: 0.0924, 160: 0.0906, 300: 0.0924, 500: 0.0985} undamaged 0.0935 damaged 0.2021 {'tail': {50: 0.1967, 100: 0.1963}, 'head': {50: 0.3068, 100: 0.3044}, 'disc24': {50: 0.1878, 100: 0.1843}, 'rand30': {50: 0.1259, 100: 0.1147}} score 0.1478 (best 0.1478 at 100) NEW BEST
+best params, from the seed: {96: 0.0924, 160: 0.0906, 300: 0.0924, 500: 0.0985}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it   110 loss 0.1837 [69->98: 0.096; seed->66: 0.111] gn 1.2e+02 maxage 294 cap 500 lr 3.95e-04 8.7s/it
+it   120 loss 0.4471 [seed->53: 0.128; 163->193*: 0.429] gn 2.1e+02 maxage 294 cap 500 lr 3.94e-04 5.4s/it
+eval it 125: {96: 0.0953, 160: 0.0963, 300: 0.1028, 500: 0.1136} undamaged 0.1020 damaged 0.2093 {'tail': {50: 0.204, 100: 0.2055}, 'head': {50: 0.3117, 100: 0.3115}, 'disc24': {50: 0.1957, 100: 0.1939}, 'rand30': {50: 0.1296, 100: 0.1223}} score 0.1556 (best 0.1478 at 100)
+it   130 loss 0.1889 [seed->53: 0.111; 84->115: 0.101] gn 2.9e+02 maxage 294 cap 500 lr 3.93e-04 7.4s/it
+it   140 loss 0.4484 [seed->85: 0.104; 192->213*: 0.461] gn 1.6e+02 maxage 294 cap 500 lr 3.92e-04 8.6s/it
+it   150 loss 0.3988 [213->232*: 0.357; seed->53: 0.137] gn 3.6e+02 maxage 294 cap 500 lr 3.91e-04 4.5s/it
+eval it 150: {96: 0.1218, 160: 0.1212, 300: 0.1276, 500: 0.1396} undamaged 0.1275 damaged 0.2310 {'tail': {50: 0.2289, 100: 0.2295}, 'head': {50: 0.3369, 100: 0.3353}, 'disc24': {50: 0.2151, 100: 0.2117}, 'rand30': {50: 0.1475, 100: 0.143}} score 0.1793 (best 0.1478 at 100)
+it   160 loss 0.4657 [213->240*: 0.454; seed->78: 0.132] gn 3.2e+02 maxage 285 cap 500 lr 3.90e-04 7.4s/it
+it   170 loss 0.2003 [seed->85: 0.118; 103->127: 0.113] gn 2.6e+02 maxage 324 cap 500 lr 3.89e-04 10.5s/it
+eval it 175: {96: 0.1137, 160: 0.1152, 300: 0.1251, 500: 0.1411} undamaged 0.1238 damaged 0.2250 {'tail': {50: 0.2191, 100: 0.2209}, 'head': {50: 0.3278, 100: 0.3297}, 'disc24': {50: 0.2123, 100: 0.2101}, 'rand30': {50: 0.1414, 100: 0.1386}} score 0.1744 (best 0.1478 at 100)
+it   180 loss 0.5190 [183->205*: 0.280; 344->374*: 0.380] gn 8.0e-02 maxage 374 cap 500 lr 3.87e-04 4.8s/it
+it   190 loss 0.1755 [60->78: 0.097; seed->66: 0.101] gn 1.1e+02 maxage 400 cap 500 lr 3.86e-04 5.3s/it
+it   200 loss 0.1807 [132->157: 0.093; seed->69: 0.111] gn 2.1e+02 maxage 400 cap 500 lr 3.84e-04 6.1s/it
+eval it 200: {96: 0.099, 160: 0.1018, 300: 0.1124, 500: 0.1279} undamaged 0.1103 damaged 0.2130 {'tail': {50: 0.2058, 100: 0.208}, 'head': {50: 0.3115, 100: 0.312}, 'disc24': {50: 0.2041, 100: 0.204}, 'rand30': {50: 0.1319, 100: 0.1271}} score 0.1617 (best 0.1478 at 100)
+best params, from the seed: {96: 0.0924, 160: 0.0906, 300: 0.0924, 500: 0.0985}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it   210 loss 0.1750 [72->90: 0.100; seed->96: 0.099] gn 5.5e+02 maxage 400 cap 500 lr 3.83e-04 8.1s/it
+it   220 loss 0.3345 [209->241*: 0.266; seed->55: 0.139] gn 3.9e+02 maxage 400 cap 500 lr 3.81e-04 5.7s/it
+eval it 225: {96: 0.1119, 160: 0.117, 300: 0.1321, 500: 0.1517} undamaged 0.1282 damaged 0.2259 {'tail': {50: 0.2187, 100: 0.2222}, 'head': {50: 0.3205, 100: 0.3225}, 'disc24': {50: 0.2179, 100: 0.2186}, 'rand30': {50: 0.1436, 100: 0.143}} score 0.1770 (best 0.1478 at 100)
+it   230 loss 0.1987 [63->83: 0.115; seed->74: 0.111] gn 4.4e+02 maxage 306 cap 500 lr 3.80e-04 5.9s/it
+it   240 loss 0.1901 [seed->66: 0.112; 94->111: 0.105] gn 3.3e+02 maxage 306 cap 500 lr 3.78e-04 5.8s/it
+it   250 loss 0.1906 [seed->73: 0.116; 94->126: 0.102] gn 1.7e+02 maxage 306 cap 500 lr 3.76e-04 7.2s/it
+eval it 250: {96: 0.1123, 160: 0.1259, 300: 0.1531, 500: 0.1831} undamaged 0.1436 damaged 0.2431 {'tail': {50: 0.2326, 100: 0.2407}, 'head': {50: 0.3365, 100: 0.343}, 'disc24': {50: 0.2319, 100: 0.2361}, 'rand30': {50: 0.159, 100: 0.1649}} score 0.1933 (best 0.1478 at 250) -> back to best, lr x0.5, pool reset
+it   260 loss 0.2573 [cut r12 8%; 99->118*: 0.183; seed->56: 0.121] gn 2.7e+02 maxage 118 cap 500 lr 1.87e-04 5.0s/it
+it   270 loss 0.1676 [112->144: 0.094; seed->93: 0.096] gn 3.8e+02 maxage 144 cap 500 lr 1.86e-04 7.8s/it
+eval it 275: {96: 0.0849, 160: 0.0875, 300: 0.0969, 500: 0.1111} undamaged 0.0951 damaged 0.2004 {'tail': {50: 0.1955, 100: 0.1976}, 'head': {50: 0.3027, 100: 0.3033}, 'disc24': {50: 0.1858, 100: 0.1852}, 'rand30': {50: 0.1193, 100: 0.1141}} score 0.1478 (best 0.1478 at 275) NEW BEST
+it   280 loss 0.1772 [seed->72: 0.104; 63->88: 0.096] gn 2.1e+02 maxage 158 cap 500 lr 1.85e-04 6.3s/it
+it   290 loss 0.1669 [69->99: 0.089; seed->74: 0.099] gn 2.3e+02 maxage 158 cap 500 lr 1.84e-04 7.3s/it
+it   300 loss 0.2101 [seed->83: 0.097; 142->174*: 0.149] gn 1.5e+02 maxage 174 cap 500 lr 1.83e-04 7.9s/it
+eval it 300: {96: 0.0877, 160: 0.0911, 300: 0.1026, 500: 0.1196} undamaged 0.1002 damaged 0.2055 {'tail': {50: 0.202, 100: 0.2048}, 'head': {50: 0.3087, 100: 0.3104}, 'disc24': {50: 0.1886, 100: 0.1878}, 'rand30': {50: 0.122, 100: 0.1195}} score 0.1529 (best 0.1478 at 275)
+best params, from the seed: {96: 0.0849, 160: 0.0875, 300: 0.0969, 500: 0.1111}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it   310 loss 0.1635 [seed->84: 0.097; 86->102: 0.088] gn 8.8e+01 maxage 219 cap 500 lr 1.82e-04 6.1s/it
+it   320 loss 0.1927 [seed->66: 0.097; 177->208*: 0.125] gn 3.6e+02 maxage 248 cap 500 lr 1.81e-04 6.5s/it
+eval it 325: {96: 0.0806, 160: 0.0836, 300: 0.0936, 500: 0.1088} undamaged 0.0917 damaged 0.1984 {'tail': {50: 0.1937, 100: 0.1958}, 'head': {50: 0.3027, 100: 0.3041}, 'disc24': {50: 0.183, 100: 0.1824}, 'rand30': {50: 0.1151, 100: 0.1103}} score 0.1450 (best 0.1450 at 325) NEW BEST
+it   330 loss 0.3182 [cut r19 22%; 111->137*: 0.305; seed->85: 0.086] gn 1.2e+02 maxage 268 cap 500 lr 1.79e-04 7.5s/it
+it   340 loss 0.1537 [76->92: 0.082; seed->85: 0.090] gn 1.8e+02 maxage 268 cap 500 lr 1.78e-04 6.4s/it
+it   350 loss 0.1694 [seed->60: 0.103; 54->84: 0.085] gn 2.5e+02 maxage 225 cap 500 lr 1.77e-04 5.9s/it
+eval it 350: {96: 0.0881, 160: 0.0944, 300: 0.1105, 500: 0.1314} undamaged 0.1061 damaged 0.2102 {'tail': {50: 0.2041, 100: 0.2086}, 'head': {50: 0.3079, 100: 0.3112}, 'disc24': {50: 0.1959, 100: 0.1977}, 'rand30': {50: 0.1285, 100: 0.1277}} score 0.1582 (best 0.1450 at 325)
+it   360 loss 0.1671 [seed->51: 0.097; 115->146: 0.090] gn 1.3e+02 maxage 250 cap 500 lr 1.76e-04 5.6s/it
+it   370 loss 0.1543 [95->116: 0.084; seed->96: 0.090] gn 2.2e+02 maxage 250 cap 500 lr 1.74e-04 8.1s/it
+eval it 375: {96: 0.0842, 160: 0.0929, 300: 0.1124, 500: 0.1366} undamaged 0.1065 damaged 0.2104 {'tail': {50: 0.2043, 100: 0.2098}, 'head': {50: 0.3081, 100: 0.3128}, 'disc24': {50: 0.1954, 100: 0.1978}, 'rand30': {50: 0.127, 100: 0.1283}} score 0.1585 (best 0.1450 at 325)
+it   380 loss 0.3878 [190->212*: 0.380; seed->51: 0.100] gn 1.4e+02 maxage 250 cap 500 lr 1.73e-04 4.8s/it
+it   390 loss 0.1679 [116->143: 0.087; seed->52: 0.100] gn 2.2e+02 maxage 212 cap 500 lr 1.72e-04 5.0s/it
+it   400 loss 0.1577 [100->116: 0.085; seed->80: 0.092] gn 1.4e+02 maxage 213 cap 500 lr 1.70e-04 6.3s/it
+eval it 400: {96: 0.0843, 160: 0.0924, 300: 0.1104, 500: 0.1327} undamaged 0.1050 damaged 0.2098 {'tail': {50: 0.2042, 100: 0.2094}, 'head': {50: 0.31, 100: 0.3142}, 'disc24': {50: 0.1937, 100: 0.1955}, 'rand30': {50: 0.1251, 100: 0.126}} score 0.1574 (best 0.1450 at 325)
+best params, from the seed: {96: 0.0806, 160: 0.0836, 300: 0.0936, 500: 0.1088}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it   410 loss 0.1541 [73->90: 0.081; seed->75: 0.091] gn 1.4e+02 maxage 256 cap 500 lr 1.69e-04 5.8s/it
+it   420 loss 0.3102 [seed->58: 0.094; 213->242*: 0.284] gn 7.7e+01 maxage 265 cap 500 lr 1.67e-04 5.7s/it
+eval it 425: {96: 0.081, 160: 0.0839, 300: 0.0943, 500: 0.1095} undamaged 0.0922 damaged 0.1975 {'tail': {50: 0.193, 100: 0.1957}, 'head': {50: 0.3007, 100: 0.3018}, 'disc24': {50: 0.1813, 100: 0.181}, 'rand30': {50: 0.1154, 100: 0.1111}} score 0.1448 (best 0.1448 at 425) NEW BEST
+it   430 loss 0.1484 [seed->92: 0.082; 95->124: 0.083] gn 4.9e+01 maxage 253 cap 500 lr 1.66e-04 8.0s/it
+it   440 loss 0.1488 [76->94: 0.076; seed->60: 0.088] gn 1.3e+02 maxage 253 cap 500 lr 1.64e-04 4.4s/it
+it   450 loss 0.1563 [71->99: 0.077; seed->64: 0.096] gn 1.5e+02 maxage 250 cap 500 lr 1.63e-04 6.0s/it
+eval it 450: {96: 0.0851, 160: 0.089, 300: 0.1012, 500: 0.1184} undamaged 0.0984 damaged 0.2026 {'tail': {50: 0.1993, 100: 0.2025}, 'head': {50: 0.301, 100: 0.3028}, 'disc24': {50: 0.1894, 100: 0.1896}, 'rand30': {50: 0.1194, 100: 0.1169}} score 0.1505 (best 0.1448 at 425)
+it   460 loss 0.4044 [cut r22 28%; seed->68: 0.092; 102->132*: 0.414] gn 9.6e+01 maxage 248 cap 500 lr 1.61e-04 6.6s/it
+it   470 loss 0.2793 [seed->52: 0.106; 163->190*: 0.229] gn 1.3e+02 maxage 248 cap 500 lr 1.60e-04 5.3s/it
+eval it 475: {96: 0.0817, 160: 0.0881, 300: 0.1032, 500: 0.123} undamaged 0.0990 damaged 0.2029 {'tail': {50: 0.1967, 100: 0.2011}, 'head': {50: 0.3025, 100: 0.3056}, 'disc24': {50: 0.1896, 100: 0.1913}, 'rand30': {50: 0.1187, 100: 0.1179}} score 0.1510 (best 0.1448 at 425)
+it   480 loss 0.1521 [68->87: 0.080; seed->68: 0.089] gn 1.0e+02 maxage 248 cap 500 lr 1.58e-04 5.5s/it
+it   490 loss 0.2312 [cut r19 8%; seed->52: 0.117; 122->148*: 0.154] gn 1.5e+02 maxage 270 cap 500 lr 1.57e-04 5.0s/it
+it   500 loss 0.1557 [72->100: 0.084; seed->94: 0.091] gn 1.3e+02 maxage 326 cap 500 lr 1.55e-04 8.2s/it
+eval it 500: {96: 0.0823, 160: 0.0883, 300: 0.1038, 500: 0.1245} undamaged 0.0997 damaged 0.2035 {'tail': {50: 0.1999, 100: 0.2041}, 'head': {50: 0.3021, 100: 0.3052}, 'disc24': {50: 0.1898, 100: 0.1914}, 'rand30': {50: 0.1181, 100: 0.1176}} score 0.1516 (best 0.1448 at 425)
+best params, from the seed: {96: 0.081, 160: 0.0839, 300: 0.0943, 500: 0.1095}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it   510 loss 0.1557 [seed->73: 0.092; 75->98: 0.081] gn 7.7e+01 maxage 326 cap 500 lr 1.53e-04 6.8s/it
+it   520 loss 0.1749 [91->122: 0.089; seed->51: 0.106] gn 1.5e+02 maxage 351 cap 500 lr 1.52e-04 5.6s/it
+eval it 525: {96: 0.0777, 160: 0.0837, 300: 0.0996, 500: 0.1208} undamaged 0.0955 damaged 0.2001 {'tail': {50: 0.1979, 100: 0.2023}, 'head': {50: 0.298, 100: 0.3009}, 'disc24': {50: 0.1856, 100: 0.187}, 'rand30': {50: 0.1148, 100: 0.1143}} score 0.1478 (best 0.1448 at 425)
+it   530 loss 0.1529 [seed->54: 0.094; 89->107: 0.074] gn 9.8e+01 maxage 351 cap 500 lr 1.50e-04 4.6s/it
+it   540 loss 0.2047 [seed->90: 0.083; 180->200*: 0.158] gn 1.4e+02 maxage 351 cap 500 lr 1.48e-04 7.3s/it
+it   550 loss 0.2653 [seed->96: 0.086; 151->168*: 0.235] gn 1.3e+02 maxage 351 cap 500 lr 1.47e-04 7.8s/it
+eval it 550: {96: 0.0737, 160: 0.0775, 300: 0.09, 500: 0.1083} undamaged 0.0874 damaged 0.1926 {'tail': {50: 0.1907, 100: 0.1937}, 'head': {50: 0.2929, 100: 0.2948}, 'disc24': {50: 0.1774, 100: 0.1779}, 'rand30': {50: 0.1079, 100: 0.1052}} score 0.1400 (best 0.1400 at 550) NEW BEST
+it   560 loss 0.1952 [215->246*: 0.137; seed->77: 0.088] gn 1.7e+02 maxage 376 cap 500 lr 1.45e-04 7.1s/it
+it   570 loss 0.1541 [113->141: 0.080; seed->79: 0.091] gn 2.1e+02 maxage 376 cap 500 lr 1.43e-04 7.0s/it
+eval it 575: {96: 0.0749, 160: 0.0787, 300: 0.0906, 500: 0.1081} undamaged 0.0881 damaged 0.1932 {'tail': {50: 0.19, 100: 0.1929}, 'head': {50: 0.2928, 100: 0.2941}, 'disc24': {50: 0.1803, 100: 0.181}, 'rand30': {50: 0.1086, 100: 0.1056}} score 0.1406 (best 0.1400 at 550)
+it   580 loss 0.1551 [101->126: 0.074; seed->61: 0.098] gn 3.0e+02 maxage 273 cap 500 lr 1.41e-04 5.9s/it
+it   590 loss 0.1569 [136->161: 0.080; seed->76: 0.095] gn 1.5e+02 maxage 273 cap 500 lr 1.40e-04 7.1s/it
+it   600 loss 0.1593 [seed->51: 0.103; 93->122: 0.073] gn 2.1e+02 maxage 273 cap 500 lr 1.38e-04 5.5s/it
+eval it 600: {96: 0.0784, 160: 0.0825, 300: 0.0944, 500: 0.1116} undamaged 0.0917 damaged 0.1983 {'tail': {50: 0.1946, 100: 0.1973}, 'head': {50: 0.3009, 100: 0.3023}, 'disc24': {50: 0.1838, 100: 0.1841}, 'rand30': {50: 0.1132, 100: 0.1104}} score 0.1450 (best 0.1400 at 550)
+best params, from the seed: {96: 0.0737, 160: 0.0775, 300: 0.09, 500: 0.1083}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it   610 loss 0.4156 [cut r23 30%; 161->190*: 0.433; seed->72: 0.087] gn 3.6e+02 maxage 252 cap 500 lr 1.36e-04 6.7s/it
+it   620 loss 0.2199 [seed->94: 0.083; 252->274*: 0.177] gn 1.9e+02 maxage 274 cap 500 lr 1.34e-04 7.5s/it
+eval it 625: {96: 0.0721, 160: 0.0756, 300: 0.0872, 500: 0.1041} undamaged 0.0847 damaged 0.1914 {'tail': {50: 0.1893, 100: 0.1923}, 'head': {50: 0.2921, 100: 0.2938}, 'disc24': {50: 0.1771, 100: 0.1775}, 'rand30': {50: 0.1064, 100: 0.103}} score 0.1381 (best 0.1381 at 625) NEW BEST
+it   630 loss 0.4090 [259->281*: 0.412; seed->56: 0.096] gn 1.7e+02 maxage 281 cap 500 lr 1.32e-04 5.1s/it
+it   640 loss 0.1535 [seed->55: 0.094; 55->72: 0.074] gn 1.5e+02 maxage 301 cap 500 lr 1.31e-04 4.7s/it
+it   650 loss 0.1445 [seed->83: 0.086; 90->118: 0.074] gn 8.0e+01 maxage 323 cap 500 lr 1.29e-04 7.6s/it
+eval it 650: {96: 0.0781, 160: 0.0802, 300: 0.09, 500: 0.1049} undamaged 0.0883 damaged 0.1941 {'tail': {50: 0.1903, 100: 0.1931}, 'head': {50: 0.2947, 100: 0.2949}, 'disc24': {50: 0.1807, 100: 0.1805}, 'rand30': {50: 0.1116, 100: 0.1067}} score 0.1412 (best 0.1381 at 625)
+it   660 loss 0.2426 [cut r18 14%; 132->159*: 0.198; seed->63: 0.090] gn 2.7e+02 maxage 323 cap 500 lr 1.27e-04 6.1s/it
+it   670 loss 0.3458 [seed->69: 0.081; 361->393*: 0.346] gn 1.2e+02 maxage 393 cap 500 lr 1.25e-04 7.1s/it
+eval it 675: {96: 0.0684, 160: 0.0741, 300: 0.0883, 500: 0.1076} undamaged 0.0846 damaged 0.1907 {'tail': {50: 0.1874, 100: 0.1909}, 'head': {50: 0.2894, 100: 0.2915}, 'disc24': {50: 0.1758, 100: 0.1772}, 'rand30': {50: 0.108, 100: 0.1051}} score 0.1376 (best 0.1376 at 675) NEW BEST
+it   680 loss 0.1380 [86->111: 0.070; seed->78: 0.081] gn 1.6e+02 maxage 217 cap 500 lr 1.23e-04 6.6s/it
+it   690 loss 0.1604 [111->131: 0.071; seed->57: 0.107] gn 2.5e+02 maxage 229 cap 500 lr 1.21e-04 5.0s/it
+it   700 loss 0.3894 [149->172*: 0.343; 214->236*: 0.148] gn 2.3e-02 maxage 236 cap 500 lr 1.19e-04 3.7s/it
+eval it 700: {96: 0.0712, 160: 0.0742, 300: 0.0838, 500: 0.0986} undamaged 0.0819 damaged 0.1892 {'tail': {50: 0.1866, 100: 0.1886}, 'head': {50: 0.2889, 100: 0.2892}, 'disc24': {50: 0.1747, 100: 0.1748}, 'rand30': {50: 0.108, 100: 0.1026}} score 0.1356 (best 0.1356 at 700) NEW BEST
+best params, from the seed: {96: 0.0712, 160: 0.0742, 300: 0.0838, 500: 0.0986}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it   710 loss 0.1546 [91->109: 0.071; seed->49: 0.099] gn 1.6e+02 maxage 247 cap 500 lr 1.18e-04 4.2s/it
+it   720 loss 0.2466 [seed->60: 0.086; 177->206*: 0.209] gn 1.8e+02 maxage 249 cap 500 lr 1.16e-04 6.6s/it
+eval it 725: {96: 0.0707, 160: 0.0748, 300: 0.087, 500: 0.104} undamaged 0.0841 damaged 0.1915 {'tail': {50: 0.1885, 100: 0.1914}, 'head': {50: 0.2904, 100: 0.2921}, 'disc24': {50: 0.1773, 100: 0.1781}, 'rand30': {50: 0.1092, 100: 0.1051}} score 0.1378 (best 0.1356 at 700)
+it   730 loss 0.1398 [94->117: 0.080; seed->92: 0.075] gn 1.2e+02 maxage 269 cap 500 lr 1.14e-04 8.2s/it
+it   740 loss 0.2273 [seed->64: 0.086; 144->166*: 0.182] gn 1.2e+02 maxage 238 cap 500 lr 1.12e-04 5.4s/it
+it   750 loss 0.1553 [98->117: 0.071; seed->49: 0.100] gn 1.2e+02 maxage 231 cap 500 lr 1.10e-04 4.4s/it
+eval it 750: {96: 0.0695, 160: 0.0734, 300: 0.0855, 500: 0.1023} undamaged 0.0827 damaged 0.1898 {'tail': {50: 0.1894, 100: 0.1924}, 'head': {50: 0.2907, 100: 0.292}, 'disc24': {50: 0.1735, 100: 0.1742}, 'rand30': {50: 0.1047, 100: 0.1012}} score 0.1362 (best 0.1356 at 700)
+it   760 loss 0.1409 [seed->60: 0.081; 87->108: 0.073] gn 2.4e+02 maxage 231 cap 500 lr 1.08e-04 5.4s/it
+it   770 loss 0.2335 [seed->79: 0.083; 259->286*: 0.195] gn 5.7e+02 maxage 286 cap 500 lr 1.06e-04 7.3s/it
+eval it 775: {96: 0.0776, 160: 0.0778, 300: 0.0834, 500: 0.0944} undamaged 0.0833 damaged 0.1908 {'tail': {50: 0.1908, 100: 0.1918}, 'head': {50: 0.2932, 100: 0.2924}, 'disc24': {50: 0.1749, 100: 0.1733}, 'rand30': {50: 0.1085, 100: 0.1013}} score 0.1370 (best 0.1356 at 700)
+it   780 loss 0.2347 [seed->50: 0.094; 227->257*: 0.182] gn 8.3e+02 maxage 286 cap 500 lr 1.04e-04 5.7s/it
+it   790 loss 0.1487 [77->109: 0.075; seed->59: 0.087] gn 3.3e+02 maxage 286 cap 500 lr 1.02e-04 6.2s/it
+it   800 loss 0.2304 [188->207*: 0.136; 202->219*: 0.140] gn 1.9e-02 maxage 286 cap 500 lr 1.01e-04 2.8s/it
+eval it 800: {96: 0.0932, 160: 0.0918, 300: 0.0946, 500: 0.1023} undamaged 0.0955 damaged 0.2020 {'tail': {50: 0.2024, 100: 0.2015}, 'head': {50: 0.296, 100: 0.2943}, 'disc24': {50: 0.1908, 100: 0.1886}, 'rand30': {50: 0.1259, 100: 0.1161}} score 0.1487 (best 0.1356 at 700)
+best params, from the seed: {96: 0.0712, 160: 0.0742, 300: 0.0838, 500: 0.0986}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it   810 loss 0.1764 [seed->66: 0.089; 145->166*: 0.110] gn 2.0e+02 maxage 286 cap 500 lr 9.87e-05 6.2s/it
+it   820 loss 0.2380 [208->233*: 0.192; seed->54: 0.090] gn 3.8e+02 maxage 286 cap 500 lr 9.69e-05 5.2s/it
+eval it 825: {96: 0.0695, 160: 0.0709, 300: 0.0774, 500: 0.0882} undamaged 0.0765 damaged 0.1861 {'tail': {50: 0.1838, 100: 0.1847}, 'head': {50: 0.2879, 100: 0.2874}, 'disc24': {50: 0.1703, 100: 0.1691}, 'rand30': {50: 0.1071, 100: 0.0986}} score 0.1313 (best 0.1313 at 825) NEW BEST
+it   830 loss 0.1365 [72->90: 0.072; seed->96: 0.077] gn 3.4e+02 maxage 286 cap 500 lr 9.50e-05 8.2s/it
+it   840 loss 0.1909 [seed->94: 0.082; 133->164*: 0.140] gn 2.5e+02 maxage 282 cap 500 lr 9.31e-05 9.9s/it
+it   850 loss 0.1407 [seed->85: 0.082; 67->87: 0.072] gn 1.2e+02 maxage 282 cap 500 lr 9.13e-05 7.4s/it
+eval it 850: {96: 0.0732, 160: 0.0751, 300: 0.0844, 500: 0.0999} undamaged 0.0832 damaged 0.1899 {'tail': {50: 0.1883, 100: 0.1905}, 'head': {50: 0.2904, 100: 0.2911}, 'disc24': {50: 0.1753, 100: 0.1749}, 'rand30': {50: 0.1066, 100: 0.1024}} score 0.1365 (best 0.1313 at 825)
+it   860 loss 0.2378 [seed->51: 0.109; 217->240*: 0.170] gn 1.9e+02 maxage 282 cap 500 lr 8.94e-05 5.3s/it
+it   870 loss 0.1412 [106->137: 0.073; seed->76: 0.082] gn 2.9e+02 maxage 282 cap 500 lr 8.76e-05 8.1s/it
+eval it 875: {96: 0.0733, 160: 0.0781, 300: 0.0923, 500: 0.112} undamaged 0.0889 damaged 0.1939 {'tail': {50: 0.1934, 100: 0.1972}, 'head': {50: 0.2899, 100: 0.2919}, 'disc24': {50: 0.1793, 100: 0.1805}, 'rand30': {50: 0.1102, 100: 0.1086}} score 0.1414 (best 0.1313 at 825)
+it   880 loss 0.1627 [75->94: 0.073; seed->50: 0.106] gn 4.4e+02 maxage 247 cap 500 lr 8.58e-05 4.8s/it
+it   890 loss 0.1446 [77->100: 0.075; seed->73: 0.085] gn 2.3e+02 maxage 243 cap 500 lr 8.40e-05 6.9s/it
+it   900 loss 0.1329 [seed->79: 0.076; 83->107: 0.069] gn 1.4e+02 maxage 243 cap 500 lr 8.22e-05 7.7s/it
+eval it 900: {96: 0.0681, 160: 0.0741, 300: 0.0897, 500: 0.1104} undamaged 0.0856 damaged 0.1912 {'tail': {50: 0.1898, 100: 0.1938}, 'head': {50: 0.2885, 100: 0.2915}, 'disc24': {50: 0.1772, 100: 0.1789}, 'rand30': {50: 0.1056, 100: 0.1045}} score 0.1384 (best 0.1313 at 825)
+best params, from the seed: {96: 0.0695, 160: 0.0709, 300: 0.0774, 500: 0.0882}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it   910 loss 0.1350 [seed->77: 0.079; 79->97: 0.069] gn 4.1e+02 maxage 252 cap 500 lr 8.04e-05 6.7s/it
+it   920 loss 0.2547 [cut r15 14%; seed->65: 0.079; 96->114*: 0.229] gn 2.2e+02 maxage 260 cap 500 lr 7.86e-05 5.9s/it
+eval it 925: {96: 0.0716, 160: 0.0773, 300: 0.0926, 500: 0.1129} undamaged 0.0886 damaged 0.1941 {'tail': {50: 0.1924, 100: 0.1963}, 'head': {50: 0.2926, 100: 0.295}, 'disc24': {50: 0.1794, 100: 0.1808}, 'rand30': {50: 0.1089, 100: 0.1078}} score 0.1414 (best 0.1313 at 825)
+it   930 loss 0.2361 [224->249*: 0.209; seed->95: 0.075] gn 1.7e+02 maxage 252 cap 500 lr 7.69e-05 8.6s/it
+it   940 loss 0.3119 [179->207*: 0.232; 194->222*: 0.155] gn 8.5e-02 maxage 278 cap 500 lr 7.51e-05 4.3s/it
+it   950 loss 0.2489 [176->208*: 0.164; 180->204*: 0.137] gn 4.7e-02 maxage 309 cap 500 lr 7.34e-05 4.7s/it
+eval it 950: {96: 0.0764, 160: 0.0812, 300: 0.0958, 500: 0.116} undamaged 0.0923 damaged 0.1959 {'tail': {50: 0.1954, 100: 0.199}, 'head': {50: 0.2917, 100: 0.294}, 'disc24': {50: 0.1798, 100: 0.181}, 'rand30': {50: 0.1137, 100: 0.1124}} score 0.1441 (best 0.1313 at 825)
+it   960 loss 0.1589 [seed->49: 0.096; 87->118: 0.079] gn 5.2e+02 maxage 309 cap 500 lr 7.17e-05 5.6s/it
+it   970 loss 0.2161 [256->275*: 0.166; seed->79: 0.088] gn 1.8e+02 maxage 366 cap 500 lr 7.00e-05 6.8s/it
+eval it 975: {96: 0.0717, 160: 0.0757, 300: 0.0882, 500: 0.1061} undamaged 0.0854 damaged 0.1926 {'tail': {50: 0.1914, 100: 0.1939}, 'head': {50: 0.2931, 100: 0.2946}, 'disc24': {50: 0.177, 100: 0.1773}, 'rand30': {50: 0.1082, 100: 0.1053}} score 0.1390 (best 0.1313 at 825)
+it   980 loss 0.1444 [seed->80: 0.083; 72->98: 0.076] gn 2.8e+02 maxage 366 cap 500 lr 6.83e-05 7.7s/it
+it   990 loss 0.1389 [87->107: 0.071; seed->73: 0.082] gn 3.7e+02 maxage 366 cap 500 lr 6.66e-05 6.7s/it
+it  1000 loss 0.2641 [228->250*: 0.233; seed->62: 0.085] gn 1.2e+02 maxage 366 cap 500 lr 6.50e-05 5.4s/it
+eval it 1000: {96: 0.0709, 160: 0.0761, 300: 0.0906, 500: 0.111} undamaged 0.0872 damaged 0.1925 {'tail': {50: 0.1911, 100: 0.1949}, 'head': {50: 0.2896, 100: 0.2919}, 'disc24': {50: 0.178, 100: 0.1793}, 'rand30': {50: 0.1086, 100: 0.1068}} score 0.1398 (best 0.1313 at 825)
+best params, from the seed: {96: 0.0695, 160: 0.0709, 300: 0.0774, 500: 0.0882}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it  1010 loss 0.1376 [81->107: 0.069; seed->58: 0.081] gn 8.9e+01 maxage 366 cap 500 lr 6.34e-05 5.8s/it
+it  1020 loss 0.3423 [cut r22 25%; 120->144*: 0.347; seed->71: 0.078] gn 2.5e+02 maxage 366 cap 500 lr 6.18e-05 6.1s/it
+eval it 1025: {96: 0.0713, 160: 0.0778, 300: 0.094, 500: 0.1154} undamaged 0.0896 damaged 0.1950 {'tail': {50: 0.1919, 100: 0.1958}, 'head': {50: 0.2931, 100: 0.2956}, 'disc24': {50: 0.1802, 100: 0.1819}, 'rand30': {50: 0.1111, 100: 0.11}} score 0.1423 (best 0.1313 at 825)
+it  1030 loss 0.3293 [144->173*: 0.336; seed->81: 0.073] gn 2.1e+02 maxage 366 cap 500 lr 6.02e-05 7.7s/it
+it  1040 loss 0.2324 [155->179*: 0.199; seed->72: 0.079] gn 1.5e+02 maxage 366 cap 500 lr 5.86e-05 6.4s/it
+it  1050 loss 0.1904 [159->179*: 0.146; seed->77: 0.076] gn 1.8e+02 maxage 366 cap 500 lr 5.71e-05 6.0s/it
+eval it 1050: {96: 0.0674, 160: 0.0732, 300: 0.0882, 500: 0.1082} undamaged 0.0843 damaged 0.1908 {'tail': {50: 0.189, 100: 0.1929}, 'head': {50: 0.2888, 100: 0.2912}, 'disc24': {50: 0.1755, 100: 0.177}, 'rand30': {50: 0.1069, 100: 0.105}} score 0.1375 (best 0.1313 at 825)
+it  1060 loss 0.1311 [seed->92: 0.076; 87->115: 0.068] gn 1.4e+02 maxage 366 cap 500 lr 5.56e-05 8.6s/it
+it  1070 loss 0.3862 [157->180*: 0.379; seed->48: 0.101] gn 1.9e+02 maxage 393 cap 500 lr 5.41e-05 4.8s/it
+eval it 1075: {96: 0.0673, 160: 0.0726, 300: 0.0875, 500: 0.1072} undamaged 0.0837 damaged 0.1900 {'tail': {50: 0.1895, 100: 0.1931}, 'head': {50: 0.2868, 100: 0.2894}, 'disc24': {50: 0.1748, 100: 0.176}, 'rand30': {50: 0.1062, 100: 0.1043}} score 0.1368 (best 0.1313 at 825)
+it  1080 loss 0.3790 [205->225*: 0.148; 198->229*: 0.329] gn 2.0e-02 maxage 393 cap 500 lr 5.26e-05 4.0s/it
+it  1090 loss 0.1293 [119->135: 0.071; seed->75: 0.071] gn 3.0e+02 maxage 253 cap 500 lr 5.12e-05 5.7s/it
+it  1100 loss 0.2364 [126->142*: 0.200; seed->55: 0.081] gn 1.4e+02 maxage 253 cap 500 lr 4.98e-05 4.6s/it
+eval it 1100: {96: 0.0627, 160: 0.0692, 300: 0.0858, 500: 0.1074} undamaged 0.0813 damaged 0.1878 {'tail': {50: 0.1863, 100: 0.1906}, 'head': {50: 0.2861, 100: 0.2893}, 'disc24': {50: 0.1721, 100: 0.1741}, 'rand30': {50: 0.1026, 100: 0.1016}} score 0.1346 (best 0.1313 at 825)
+best params, from the seed: {96: 0.0695, 160: 0.0709, 300: 0.0774, 500: 0.0882}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it  1110 loss 0.1268 [82->99: 0.062; seed->67: 0.075] gn 2.7e+02 maxage 253 cap 500 lr 4.84e-05 5.7s/it
+it  1120 loss 0.1280 [74->103: 0.065; seed->94: 0.075] gn 1.5e+02 maxage 282 cap 500 lr 4.70e-05 8.6s/it
+eval it 1125: {96: 0.0649, 160: 0.0714, 300: 0.0875, 500: 0.1084} undamaged 0.0830 damaged 0.1894 {'tail': {50: 0.1874, 100: 0.1914}, 'head': {50: 0.2871, 100: 0.2902}, 'disc24': {50: 0.1743, 100: 0.1764}, 'rand30': {50: 0.105, 100: 0.1036}} score 0.1362 (best 0.1313 at 825)
+it  1130 loss 0.1293 [seed->92: 0.074; 126->155: 0.067] gn 1.6e+02 maxage 256 cap 500 lr 4.57e-05 8.5s/it
+it  1140 loss 0.1224 [74->96: 0.065; seed->88: 0.069] gn 2.4e+02 maxage 256 cap 500 lr 4.44e-05 7.5s/it
+it  1150 loss 0.1434 [seed->48: 0.094; 88->110: 0.063] gn 2.6e+02 maxage 244 cap 500 lr 4.31e-05 4.8s/it
+eval it 1150: {96: 0.0666, 160: 0.0725, 300: 0.0876, 500: 0.1083} undamaged 0.0838 damaged 0.1899 {'tail': {50: 0.1899, 100: 0.1938}, 'head': {50: 0.2877, 100: 0.2904}, 'disc24': {50: 0.1741, 100: 0.1756}, 'rand30': {50: 0.1045, 100: 0.1032}} score 0.1368 (best 0.1313 at 825)
+it  1160 loss 0.1295 [seed->95: 0.074; 86->112: 0.069] gn 2.0e+02 maxage 276 cap 500 lr 4.19e-05 8.6s/it
+it  1170 loss 0.1291 [seed->73: 0.074; 120->142: 0.067] gn 2.7e+02 maxage 276 cap 500 lr 4.07e-05 6.7s/it
+eval it 1175: {96: 0.0654, 160: 0.0707, 300: 0.0855, 500: 0.1059} undamaged 0.0819 damaged 0.1882 {'tail': {50: 0.1875, 100: 0.1912}, 'head': {50: 0.2883, 100: 0.2909}, 'disc24': {50: 0.1727, 100: 0.1743}, 'rand30': {50: 0.1012, 100: 0.0996}} score 0.1350 (best 0.1313 at 825)
+it  1180 loss 0.2387 [219->251*: 0.171; 196->212*: 0.118] gn 7.8e-02 maxage 252 cap 500 lr 3.95e-05 3.6s/it
+it  1190 loss 0.1351 [78->100: 0.066; seed->53: 0.081] gn 5.0e+02 maxage 251 cap 500 lr 3.83e-05 4.9s/it
+it  1200 loss 0.1309 [seed->65: 0.076; 85->102: 0.067] gn 1.7e+02 maxage 251 cap 500 lr 3.72e-05 5.8s/it
+eval it 1200: {96: 0.0671, 160: 0.0729, 300: 0.088, 500: 0.1082} undamaged 0.0840 damaged 0.1901 {'tail': {50: 0.1902, 100: 0.194}, 'head': {50: 0.2882, 100: 0.2904}, 'disc24': {50: 0.1733, 100: 0.1751}, 'rand30': {50: 0.1058, 100: 0.1042}} score 0.1371 (best 0.1313 at 825)
+best params, from the seed: {96: 0.0695, 160: 0.0709, 300: 0.0774, 500: 0.0882}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it  1210 loss 0.2459 [128->160*: 0.136; 150->172*: 0.163] gn 1.9e-02 maxage 240 cap 500 lr 3.61e-05 4.1s/it
+it  1220 loss 0.1925 [151->171*: 0.144; seed->71: 0.081] gn 2.6e+02 maxage 240 cap 500 lr 3.50e-05 6.4s/it
+eval it 1225: {96: 0.0703, 160: 0.075, 300: 0.0884, 500: 0.1075} undamaged 0.0853 damaged 0.1918 {'tail': {50: 0.191, 100: 0.194}, 'head': {50: 0.2923, 100: 0.2948}, 'disc24': {50: 0.1746, 100: 0.1754}, 'rand30': {50: 0.1071, 100: 0.1052}} score 0.1386 (best 0.1313 at 825)
+it  1230 loss 0.3595 [cut r22 26%; seed->53: 0.084; 109->139*: 0.362] gn 4.2e+02 maxage 240 cap 500 lr 3.40e-05 5.5s/it
+it  1240 loss 0.1283 [seed->88: 0.074; 61->80: 0.066] gn 1.5e+02 maxage 240 cap 500 lr 3.30e-05 7.1s/it
+it  1250 loss 0.2187 [215->240*: 0.190; seed->80: 0.070] gn 1.9e+02 maxage 257 cap 500 lr 3.21e-05 7.3s/it
+eval it 1250: {96: 0.0636, 160: 0.0692, 300: 0.084, 500: 0.1038} undamaged 0.0801 damaged 0.1868 {'tail': {50: 0.1866, 100: 0.1903}, 'head': {50: 0.286, 100: 0.2887}, 'disc24': {50: 0.1703, 100: 0.1717}, 'rand30': {50: 0.1015, 100: 0.0997}} score 0.1335 (best 0.1313 at 825)
+it  1260 loss 0.3310 [153->170*: 0.284; 246->275*: 0.128] gn 2.8e-02 maxage 275 cap 500 lr 3.11e-05 3.5s/it
+it  1270 loss 0.1210 [seed->87: 0.068; 72->102: 0.064] gn 1.0e+02 maxage 257 cap 500 lr 3.02e-05 8.3s/it
+eval it 1275: {96: 0.0638, 160: 0.0688, 300: 0.083, 500: 0.1026} undamaged 0.0796 damaged 0.1863 {'tail': {50: 0.186, 100: 0.1893}, 'head': {50: 0.2862, 100: 0.2885}, 'disc24': {50: 0.1693, 100: 0.1704}, 'rand30': {50: 0.1017, 100: 0.0994}} score 0.1329 (best 0.1313 at 825)
+it  1280 loss 0.1338 [77->93: 0.067; seed->64: 0.078] gn 1.9e+02 maxage 259 cap 500 lr 2.94e-05 5.4s/it
+it  1290 loss 0.1372 [seed->50: 0.083; 81->107: 0.065] gn 1.0e+02 maxage 259 cap 500 lr 2.86e-05 5.1s/it
+it  1300 loss 0.1983 [136->168*: 0.165; seed->80: 0.070] gn 1.1e+02 maxage 259 cap 500 lr 2.78e-05 7.1s/it
+eval it 1300: {96: 0.0618, 160: 0.0674, 300: 0.0819, 500: 0.1014} undamaged 0.0781 damaged 0.1854 {'tail': {50: 0.1856, 100: 0.1892}, 'head': {50: 0.2844, 100: 0.2869}, 'disc24': {50: 0.1687, 100: 0.17}, 'rand30': {50: 0.1003, 100: 0.0978}} score 0.1317 (best 0.1313 at 825)
+best params, from the seed: {96: 0.0695, 160: 0.0709, 300: 0.0774, 500: 0.0882}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it  1310 loss 0.1232 [seed->83: 0.072; 86->102: 0.063] gn 7.4e+01 maxage 276 cap 500 lr 2.70e-05 6.7s/it
+it  1320 loss 0.1716 [seed->90: 0.070; 165->192*: 0.128] gn 2.0e+02 maxage 279 cap 500 lr 2.63e-05 7.7s/it
+eval it 1325: {96: 0.0641, 160: 0.0688, 300: 0.0821, 500: 0.101} undamaged 0.0790 damaged 0.1863 {'tail': {50: 0.1865, 100: 0.1896}, 'head': {50: 0.2863, 100: 0.2886}, 'disc24': {50: 0.1681, 100: 0.1688}, 'rand30': {50: 0.1024, 100: 0.0999}} score 0.1326 (best 0.1313 at 825)
+it  1330 loss 0.2521 [cut r23 18%; 124->153*: 0.239; seed->92: 0.069] gn 1.1e+02 maxage 221 cap 500 lr 2.56e-05 8.5s/it
+it  1340 loss 0.1795 [192->223*: 0.130; seed->71: 0.076] gn 1.4e+02 maxage 240 cap 500 lr 2.50e-05 7.2s/it
+it  1350 loss 0.2501 [174->201*: 0.231; seed->78: 0.072] gn 4.7e+02 maxage 254 cap 500 lr 2.44e-05 6.8s/it
+eval it 1350: {96: 0.0619, 160: 0.0673, 300: 0.0814, 500: 0.1007} undamaged 0.0778 damaged 0.1850 {'tail': {50: 0.1847, 100: 0.1883}, 'head': {50: 0.2835, 100: 0.2861}, 'disc24': {50: 0.1697, 100: 0.1715}, 'rand30': {50: 0.0994, 100: 0.0971}} score 0.1314 (best 0.1313 at 825)
+it  1360 loss 0.1193 [77->93: 0.061; seed->81: 0.069] gn 1.3e+02 maxage 254 cap 500 lr 2.38e-05 6.5s/it
+it  1370 loss 0.1219 [92->108: 0.062; seed->80: 0.070] gn 1.1e+02 maxage 277 cap 500 lr 2.33e-05 6.6s/it
+eval it 1375: {96: 0.0633, 160: 0.0685, 300: 0.0825, 500: 0.1023} undamaged 0.0791 damaged 0.1863 {'tail': {50: 0.1859, 100: 0.1895}, 'head': {50: 0.2858, 100: 0.2887}, 'disc24': {50: 0.1691, 100: 0.1703}, 'rand30': {50: 0.1017, 100: 0.0995}} score 0.1327 (best 0.1313 at 825)
+it  1380 loss 0.1233 [seed->67: 0.071; 93->115: 0.062] gn 1.4e+02 maxage 277 cap 500 lr 2.28e-05 6.1s/it
+it  1390 loss 0.1804 [182->214*: 0.137; seed->70: 0.072] gn 1.4e+02 maxage 214 cap 500 lr 2.24e-05 6.9s/it
+it  1400 loss 0.1815 [seed->74: 0.072; 184->206*: 0.138] gn 1.9e+02 maxage 218 cap 500 lr 2.20e-05 6.4s/it
+eval it 1400: {96: 0.0624, 160: 0.0673, 300: 0.0812, 500: 0.1008} undamaged 0.0779 damaged 0.1850 {'tail': {50: 0.1843, 100: 0.1879}, 'head': {50: 0.2844, 100: 0.2869}, 'disc24': {50: 0.1683, 100: 0.1697}, 'rand30': {50: 0.1002, 100: 0.098}} score 0.1314 (best 0.1313 at 825)
+best params, from the seed: {96: 0.0695, 160: 0.0709, 300: 0.0774, 500: 0.0882}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+it  1410 loss 0.1801 [seed->90: 0.069; 234->253*: 0.140] gn 8.3e+01 maxage 253 cap 500 lr 2.16e-05 7.2s/it
+it  1420 loss 0.1342 [seed->55: 0.083; 82->107: 0.062] gn 1.5e+02 maxage 253 cap 500 lr 2.13e-05 5.2s/it
+eval it 1425: {96: 0.0632, 160: 0.0688, 300: 0.0835, 500: 0.1028} undamaged 0.0796 damaged 0.1872 {'tail': {50: 0.1857, 100: 0.1894}, 'head': {50: 0.2849, 100: 0.2876}, 'disc24': {50: 0.1728, 100: 0.1746}, 'rand30': {50: 0.1027, 100: 0.1002}} score 0.1334 (best 0.1313 at 825)
+it  1430 loss 0.1259 [139->168: 0.068; seed->73: 0.070] gn 1.4e+02 maxage 252 cap 500 lr 2.10e-05 6.9s/it
+it  1440 loss 0.2991 [180->201*: 0.299; seed->84: 0.069] gn 2.9e+02 maxage 201 cap 500 lr 2.07e-05 7.2s/it
+it  1450 loss 0.1405 [73->90: 0.063; seed->49: 0.089] gn 4.0e+02 maxage 220 cap 500 lr 2.05e-05 4.1s/it
+eval it 1450: {96: 0.0635, 160: 0.0676, 300: 0.0804, 500: 0.0981} undamaged 0.0774 damaged 0.1852 {'tail': {50: 0.1844, 100: 0.1873}, 'head': {50: 0.2848, 100: 0.2866}, 'disc24': {50: 0.1688, 100: 0.1698}, 'rand30': {50: 0.1015, 100: 0.0982}} score 0.1313 (best 0.1313 at 1450) NEW BEST
+it  1460 loss 0.1239 [seed->87: 0.070; 99->126: 0.065] gn 5.3e+02 maxage 247 cap 500 lr 2.03e-05 8.0s/it
+it  1470 loss 0.1367 [seed->55: 0.085; 101->130: 0.064] gn 2.1e+02 maxage 276 cap 500 lr 2.02e-05 5.2s/it
+eval it 1475: {96: 0.0705, 160: 0.075, 300: 0.0878, 500: 0.1058} undamaged 0.0848 damaged 0.1918 {'tail': {50: 0.1905, 100: 0.1935}, 'head': {50: 0.2884, 100: 0.2902}, 'disc24': {50: 0.1778, 100: 0.1791}, 'rand30': {50: 0.1091, 100: 0.1055}} score 0.1383 (best 0.1313 at 1450)
+it  1480 loss 0.3068 [cut r22 23%; seed->84: 0.073; 120->136*: 0.305] gn 4.5e+02 maxage 237 cap 500 lr 2.01e-05 7.1s/it
+it  1490 loss 0.3000 [154->182*: 0.297; seed->95: 0.073] gn 1.0e+03 maxage 243 cap 500 lr 2.00e-05 8.5s/it
+it  1499 loss 0.1267 [91->123: 0.067; seed->76: 0.071] gn 2.0e+02 maxage 257 cap 500 lr 2.00e-05 7.1s/it
+best params, from the seed: {96: 0.0635, 160: 0.0676, 300: 0.0804, 500: 0.0981}
+pictures: /home/user/field-life/train/fca_gecko_rgB_strip.png /home/user/field-life/train/fca_gecko_rgB_vs.png
+after (best params, from the seed): {96: 0.0635, 160: 0.0676, 300: 0.0804, 500: 0.0981}
