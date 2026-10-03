@@ -79,6 +79,12 @@ body.hidep #toggle{display:block}
       <div class="note">A disc of mass, 27 cells across, grows into the gecko. Every cell runs the same trained rule: Fluoddity's Fourier brain reads the trail, the mass and six hidden numbers through two eyes, accelerates, and pushes its mass to where it lands. A small paint head carries the colour along. Nothing tells a cell where it is.</div>
     </div>
     <div class="grp">
+      <h2>Physics</h2>
+      <div id="g-phys"></div>
+      <div class="btns"><button id="b-trained" type="button">reset to trained values</button></div>
+      <div class="note">These start at the values the gecko was trained with. Change them while it runs, or restart from the seed to see how it grows under them.</div>
+    </div>
+    <div class="grp">
       <h2>View</h2>
       <div id="g-view"></div>
       <div id="inset"><canvas id="tgt" width="128" height="128" title="the target, gecko.png (T shows it full size)"></canvas>
@@ -515,18 +521,33 @@ function restart(){
   lossAt = -1;
 }
 
-const nt = G.nt, box = Math.min(G.phys.spread, nt - 1);
+// the physics the step uses: the trained values, editable from the panel. While they are
+// untouched the exported constants are used as they are (bit-identical to torch); once any is
+// changed, the constants are derived here the way the step derives them.
+const TRAINED = { ...G.phys, mgain: G.mgain, hgain: G.hgain, brake: G.bb, rest: G.rest };
+const PH = { ...TRAINED };
+let edited = false;
+const SQ = N/1024;   // sqrt(world size) for a 256 grid
+function derived(){
+  if(!edited) return D_;
+  const pc = Math.min(0.999, Math.max(0.001, PH.persist)), dd = PH.diff*PH.diff;
+  return { cos_a: Math.cos(PH.angle*Math.PI), sin_a: Math.sin(PH.angle*Math.PI), sd: 1/SQ*0.005*PH.dist,
+           scaling: SQ*38.855*PH.gain, fcoef: 1/SQ*PH.gfm/400, scoef: 1/SQ*PH.gfm/20, pcoef: PH.press*(2/N),
+           K: dd > 1e-7 ? 4/(Math.pow(5, dd) - 1) : 1e7, persist: PH.persist, deposit: 1 - pc, cells: N/2 };
+}
 function physicsStep(){
+  const D_ = derived();
+  const box = Math.max(1, Math.min(3, PH.spread)), nt = Math.min(4, Math.floor(box) + 1 + (box % 1 > 0 ? 1 : 0));
   gl.disable(gl.BLEND);
   // 1. brain
   let pr = P.brain; gl.useProgram(pr.p);
   for(let k = 0; k < 4; k++) bindTex(k, st[cur][k], pr, "uS" + k);
   bindTex(4, trl[tcur], pr, "uT"); bindTex(5, wTex, pr, "uW");
-  const U = pr.u, ph = G.phys;
+  const U = pr.u, ph = PH;
   gl.uniform1f(U.uCos, D_.cos_a); gl.uniform1f(U.uSin, D_.sin_a); gl.uniform1f(U.uSD, D_.sd); gl.uniform1f(U.uScale, D_.scaling);
   gl.uniform1f(U.uFC, D_.fcoef); gl.uniform1f(U.uSC, D_.scoef); gl.uniform1f(U.uAxial, ph.axial); gl.uniform1f(U.uLateral, ph.lateral);
-  gl.uniform1f(U.uDrag, ph.drag); gl.uniform1f(U.uStrafeP, ph.strafe); gl.uniform1f(U.uMG, G.mgain); gl.uniform1f(U.uHG, G.hgain);
-  gl.uniform1f(U.uBB, G.bb); gl.uniform1f(U.uPC, D_.pcoef); gl.uniform1f(U.uRest, G.rest); gl.uniform1f(U.uOriMix, G.orimix);
+  gl.uniform1f(U.uDrag, ph.drag); gl.uniform1f(U.uStrafeP, ph.strafe); gl.uniform1f(U.uMG, PH.mgain); gl.uniform1f(U.uHG, PH.hgain);
+  gl.uniform1f(U.uBB, PH.brake); gl.uniform1f(U.uPC, D_.pcoef); gl.uniform1f(U.uRest, PH.rest); gl.uniform1f(U.uOriMix, G.orimix);
   gl.uniform1f(U.uCells, D_.cells); gl.uniform1i(U.uAbsOri, G.absori); gl.uniform1i(U.uSym, G.sym ? 1 : 0); gl.uniform1i(U.uPress, G.pressure_on ? 1 : 0);
   target(QF); gl.drawArrays(gl.TRIANGLES, 0, 3);
   // 2. move
@@ -659,7 +680,8 @@ function syncUI(){
 const gR = $("g-run"), gV = $("g-view");
 gR.style.display = "flex"; gR.style.flexDirection = "column"; gR.style.gap = "6px";
 gV.style.display = "flex"; gV.style.flexDirection = "column"; gV.style.gap = "6px";
-rowSlider(gR, "speed", "steps/frame", 1, 20, 1, look);
+rowSlider(gR, "speed", "steps/frame", 0.05, 20, 0.05, look);
+ctl.speed.r.title = "below 1 the gecko takes a step only every few frames: 0.1 is one step every 10 frames";
 rowSlider(gR, "restart_at", "restart at", 0, 2000, 50, look);
 rowCheck(gR, "loss", "measure the loss every 8 steps", look);
 rowSelect(gV, "mode", "show", ["mass × colour", "mass"], look);
@@ -668,6 +690,16 @@ rowCheck(gV, "glow", "glow (tonemap + bloom)", look);
 rowCheck(gV, "smooth", "smooth cells", look);
 rowCheck(gV, "show_target", "show the target (T)", look);
 ctl.restart_at.r.title = "restart from the seed at this step (0 = never)";
+const gP = $("g-phys"); gP.style.display = "flex"; gP.style.flexDirection = "column"; gP.style.gap = "6px";
+const mark = () => { edited = Object.keys(TRAINED).some(k => PH[k] !== TRAINED[k]); };
+for(const [k, label, lo, hi, s] of [
+  ["axial", "axial force", -0.5, 0.5, 0.001], ["lateral", "lateral force", -2, 1, 0.001], ["gain", "sensor gain", 0, 10, 0.01],
+  ["drag", "drag", 0, 1.2, 0.001], ["strafe", "strafe power", 0, 1, 0.001], ["angle", "sensor angle", -1, 1, 0.001],
+  ["gfm", "force mult", 0, 0.5, 0.001], ["dist", "sensor dist", 0, 4, 0.01], ["persist", "persistence", 0, 1, 0.001],
+  ["diff", "diffusion", 0, 1, 0.001], ["press", "pressure", 0, 2, 0.01], ["rest", "rest mass", 0, 5, 0.01],
+  ["spread", "spread (cells)", 1, 3, 0.05], ["brake", "brake", 0, 10, 0.01], ["mgain", "mass sight", 0, 3, 0.01],
+  ["hgain", "hidden sight", 0, 3, 0.01]]) rowSlider(gP, k, label, lo, hi, s, PH, mark);
+$("b-trained").onclick = () => { Object.assign(PH, TRAINED); edited = false; syncUI(); flash("trained values"); };
 syncUI();
 
 // the target inset
@@ -715,9 +747,10 @@ new ResizeObserver(() => { clearTimeout(resizeT); resizeT = setTimeout(buildDisp
 
 // ---------------------------------------------------------------- go
 buildDisplay(); restart();
-let win = {t: performance.now(), f: 0, s: 0}, fps = 0, sps = 0;
+let win = {t: performance.now(), f: 0, s: 0}, fps = 0, sps = 0, stepAcc = 0;
 function loop(){
-  const n = paused ? 0 : Math.max(1, Math.round(look.speed));
+  stepAcc = paused ? 0 : stepAcc + Math.max(0.01, look.speed);
+  const n = Math.floor(stepAcc); stepAcc -= n;
   for(let i = 0; i < n; i++){
     physicsStep();
     if(look.restart_at > 0 && step >= look.restart_at) restart();
@@ -727,7 +760,7 @@ function loop(){
   const now = performance.now(); win.f++; win.s += n;
   if(now - win.t >= 1000){ fps = win.f*1000/(now - win.t); sps = win.s*1000/(now - win.t); win = {t: now, f: 0, s: 0}; }
   const msg = performance.now() - flashT < 1800 ? " · " + flashMsg : "";
-  $("stat1").textContent = `step ${step} · ${paused ? "paused" : sps.toFixed(0) + " steps/s"} · ${fps.toFixed(0)} fps` + msg;
+  $("stat1").textContent = `step ${step} · ${paused ? "paused" : sps.toFixed(sps < 10 ? 1 : 0) + " steps/s"} · ${fps.toFixed(0)} fps` + (edited ? " · edited physics" : "") + msg;
   $("stat2").textContent = look.loss && lossAt >= 0 ? `loss at ${lossAt}: mass ${lossM.toFixed(3)} · colour ${lossC.toFixed(3)}` : "loss: off";
   $("stat3").textContent = `${N}² cells · mass ${totalMass.toFixed(1)} of ${G.total_mass.toFixed(1)}` + (look.show_target ? " · target" : "");
   requestAnimationFrame(loop);
