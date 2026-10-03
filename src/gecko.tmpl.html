@@ -1,0 +1,745 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fluoddity CA Gecko</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --void:#030506;
+  --panel:rgba(12,16,18,.88);
+  --line:#22303a;
+  --ink:#dfe7ea;
+  --ink2:#8197a0;
+  --accent:#e7a54a;
+  --font-display:"Sora", "Segoe UI", system-ui, sans-serif;
+  --font-data:"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{margin:0;background:var(--void);color:var(--ink);font:12px/1.4 var(--font-data);overflow:hidden}
+body{display:flex;height:100%}
+#c{flex:1 1 auto;min-width:0;height:100%;display:block;touch-action:none;cursor:crosshair}
+#panel{flex:0 0 312px;height:100%;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);
+  background:var(--panel);border-left:1px solid var(--line);
+  display:flex;flex-direction:column;overflow:hidden}
+#panel header{padding:12px 14px 10px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+#panel h1{margin:0;font:600 15px/1.2 var(--font-display);letter-spacing:.01em}
+#panel h1 span{color:var(--accent)}
+#stat{color:var(--ink2);font-variant-numeric:tabular-nums;display:flex;flex-direction:column}
+#stat div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:1.4em}
+#scroll{overflow-y:auto;padding:10px 14px 14px;display:flex;flex-direction:column;gap:14px}
+.grp{display:flex;flex-direction:column;gap:6px}
+.grp h2{margin:0;font:500 10px/1 var(--font-data);text-transform:uppercase;letter-spacing:.12em;color:var(--ink2)}
+.row{display:grid;grid-template-columns:96px 1fr 58px;gap:6px;align-items:center}
+.row label{color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row input[type=number]{width:100%;background:#0a0e10;color:var(--ink);border:1px solid var(--line);border-radius:3px;
+  font:11px var(--font-data);padding:2px 4px;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--accent)}
+select,button{font:12px var(--font-data);color:var(--ink);background:#0d1316;border:1px solid var(--line);border-radius:4px;padding:5px 7px}
+button{cursor:pointer}
+button:hover,select:hover{border-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.btns{display:flex;flex-wrap:wrap;gap:6px}
+.chk{display:flex;gap:6px;align-items:center;color:var(--ink2)}
+.sel{display:grid;grid-template-columns:96px 1fr;gap:6px;align-items:center;color:var(--ink2)}
+.note{color:var(--ink2);line-height:1.5}
+.note b{color:var(--ink);font-weight:500}
+.note a{color:var(--accent)}
+#inset{display:flex;gap:10px;align-items:flex-start}
+#tgt{width:128px;height:128px;image-rendering:pixelated;border:1px solid var(--line);background:#000;flex:0 0 auto;cursor:pointer}
+#err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;padding:24px;text-align:center;color:var(--ink)}
+#toggle{position:fixed;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));display:none}
+body.hidep #panel{display:none}
+body.hidep #toggle{display:block}
+@media (max-width:640px){
+  body{flex-direction:column}
+  #c{height:auto;flex:1 1 54%}
+  #panel{flex:0 0 46%;height:auto;border-left:0;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
+}
+</style>
+
+<canvas id="c"></canvas>
+<div id="err"></div>
+<button id="toggle" type="button">controls (H)</button>
+<div id="panel">
+  <header>
+    <h1>Fluoddity CA <span>gecko</span></h1>
+    <div id="stat"><div id="stat1">&nbsp;</div><div id="stat2">&nbsp;</div><div id="stat3">&nbsp;</div></div>
+  </header>
+  <div id="scroll">
+    <div class="grp">
+      <h2>Run</h2>
+      <div class="btns">
+        <button id="b-pause" type="button" title="Space">pause</button>
+        <button id="b-reset" type="button" title="R">restart from seed</button>
+        <button id="b-step" type="button" title=". (one step, paused)">step</button>
+      </div>
+      <div id="g-run"></div>
+      <div class="note">A disc of mass, 27 cells across, grows into the gecko. Every cell runs the same trained rule: Fluoddity's Fourier brain reads the trail, the mass and six hidden numbers through two eyes, accelerates, and pushes its mass to where it lands. A small paint head carries the colour along. Nothing tells a cell where it is.</div>
+    </div>
+    <div class="grp">
+      <h2>View</h2>
+      <div id="g-view"></div>
+      <div id="inset"><canvas id="tgt" width="128" height="128" title="the target, gecko.png (T shows it full size)"></canvas>
+        <div class="note">The target, 128×128, one pixel per cell. <b>T</b> swaps the view to it. Wheel to zoom, drag to pan, double-click to recentre.</div></div>
+    </div>
+    <div class="grp">
+      <h2>About</h2>
+      <div class="note" id="about"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/*GECKO*/
+</script>
+<script>
+"use strict";
+// ============================================================================
+// The trained gecko of fluoddity_ca_gecko.py (see_mass, 6 hidden channels, brake,
+// pressure, paint), stepped exactly as the torch model steps it, at 256 x 256.
+// State: 16 channels in four RGBA32F textures, in the model's own order:
+//   S0 = (m, m*vx, m*vy, m*h0)  S1 = (m*h1..h4)  S2 = (m*h5, m*p0..p2)  S3 = (m*p3..p6)
+// Trail: RG32F. Cell (x, y) is texel (x, y); y = 0 is the bottom row, as in the model.
+// ============================================================================
+const G = GECKO;
+const cv = document.getElementById("c");
+const gl = cv.getContext("webgl2", {antialias:false, alpha:false, premultipliedAlpha:false});
+function fail(msg){ const e=document.getElementById("err"); e.style.display="flex"; e.textContent=msg; throw new Error(msg); }
+if(!gl) fail("This page needs WebGL2.");
+if(!gl.getExtension("EXT_color_buffer_float")) fail("This page needs EXT_color_buffer_float (float render targets).");
+if(!gl.getExtension("EXT_float_blend")) fail("This page needs EXT_float_blend (adding 32-bit floats when mass moves).");
+if(gl.getParameter(gl.MAX_DRAW_BUFFERS) < 5) fail("This page needs 5 draw buffers.");
+
+const dec = o => { const b = atob(o.b64), u = new Uint8Array(b.length); for(let i=0;i<b.length;i++) u[i] = b.charCodeAt(i);
+  const f = new Float32Array(u.buffer); f.shape = o.shape; return f; };
+const N = G.N, NC = G.freq.shape[0], DIN = G.freq.shape[1], HD = G.wh.shape[0], PC = G.pw2.shape[0], HW = G.pw1.shape[0];
+if(N !== 256 || DIN !== 25 || HD !== 6 || PC !== 7 || G.pw1.shape[1] !== 54 || HW % 4) fail("unexpected model shape");
+const D_ = G.derived;
+
+// ---------------------------------------------------------------- weights, packed as vec4 texels
+const W = (() => {
+  const freq = dec(G.freq), amp = dec(G.amp), wh = dec(G.wh), bh = dec(G.bh), wb = dec(G.wb);
+  const w1 = dec(G.pw1), b1 = dec(G.pb1), w2 = dec(G.pw2), b2 = dec(G.pb2);
+  const parts = [], off = {}; let n = 0;
+  const add = (name, vec4s) => { off[name] = n; parts.push(vec4s); n += vec4s.length/4; };
+  const pad = (arr, len) => { const o = new Float32Array(len); o.set(arr); return o; };
+  { const o = new Float32Array(NC*28); for(let c=0;c<NC;c++) for(let i=0;i<25;i++) o[c*28+i] = freq[c*25+i]; add("FREQ", o); }
+  add("AMP", amp); add("WH", wh); add("WB", wb); add("BH", pad(bh, 8));
+  { const o = new Float32Array(HW*56); for(let j=0;j<HW;j++) for(let i=0;i<54;i++) o[j*56+i] = w1[j*54+i]; add("W1", o); }
+  add("B1", b1);
+  { const o = new Float32Array(HW*8); for(let j=0;j<HW;j++) for(let k=0;k<PC;k++) o[j*8+k] = w2[k*HW+j]; add("W2T", o); }  // W2 transposed: 2 vec4 per hidden unit
+  add("B2", pad(b2, 8));
+  const rows = Math.ceil(n/256), data = new Float32Array(256*rows*4); let p = 0;
+  for(const a of parts){ data.set(a, p); p += a.length; }
+  return {off, rows, data};
+})();
+
+// ---------------------------------------------------------------- shaders
+const HEAD = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+`;
+const VS_QUAD = `#version 300 es
+out vec2 vUv;
+void main(){ vec2 p = vec2((gl_VertexID<<1)&2, gl_VertexID&2); vUv = p; gl_Position = vec4(p*2.0-1.0, 0.0, 1.0); }`;
+const DEFS = `
+#define NC ${NC}
+#define HW ${HW}
+` + Object.entries(W.off).map(([k, v]) => `#define O_${k} ${v}`).join("\n") + "\n";
+
+// ---- 1. every cell: eyes, brain, hidden, brake, pressure, paint. One fragment per cell.
+const FS_BRAIN = HEAD + DEFS + `
+uniform sampler2D uS0, uS1, uS2, uS3, uT, uW;
+uniform float uCos, uSin, uSD, uScale, uFC, uSC, uAxial, uLateral, uDrag, uStrafeP, uMG, uHG, uBB, uPC, uRest, uOriMix, uCells;
+uniform int uAbsOri; uniform bool uSym, uPress;
+layout(location=0) out vec4 o0; layout(location=1) out vec4 o1; layout(location=2) out vec4 o2; layout(location=3) out vec4 o3;
+layout(location=4) out vec4 o4;   // displacement this step, in cells
+vec4 Wt(int k){ return texelFetch(uW, ivec2(k & 255, k >> 8), 0); }
+ivec2 wrapc(ivec2 c){ return ivec2(mod(vec2(c), 256.0)); }
+float tanh_(float x){ return tanh(clamp(x, -15.0, 15.0)); }
+float asinh_(float x){ float a = abs(x); return sign(x)*log(a + sqrt(a*a + 1.0)); }
+// the eye: bilinear taps at absolute cell coordinates, wrapped, every field at once
+vec2 eT; vec4 e0, e1, e2, e3;
+void eye(vec2 p){
+  vec2 f = floor(p), r = p - f;
+  ivec2 i0 = ivec2(mod(f, 256.0)), i1 = ivec2(mod(f + 1.0, 256.0));
+  ivec2 P[4] = ivec2[4](i0, ivec2(i1.x, i0.y), ivec2(i0.x, i1.y), i1);
+  float w[4] = float[4]((1.0-r.x)*(1.0-r.y), r.x*(1.0-r.y), (1.0-r.x)*r.y, r.x*r.y);
+  eT = vec2(0); e0 = vec4(0); e1 = vec4(0); e2 = vec4(0); e3 = vec4(0);
+  for(int k = 0; k < 4; k++){
+    eT += texelFetch(uT, P[k], 0).xy*w[k];
+    e0 += texelFetch(uS0, P[k], 0)*w[k]; e1 += texelFetch(uS1, P[k], 0)*w[k];
+    e2 += texelFetch(uS2, P[k], 0)*w[k]; e3 += texelFetch(uS3, P[k], 0)*w[k];
+  }
+}
+// sin and cos to float32 precision on any GPU (built-ins can be ~1e-4 off): Cody-Waite reduction by pi/2, then Cephes' polynomials
+vec2 sincos_(float x){
+  float k = floor(x*0.6366197723675814 + 0.5);
+  float r = ((x - k*1.5703125) - k*4.837512969970703125e-4) - k*7.549789948768648e-8;
+  float z = r*r;
+  float s = r + r*z*(-1.6666654611e-1 + z*(8.3321608736e-3 + z*(-1.9515295891e-4)));
+  float c = 1.0 - 0.5*z + z*z*(4.166664568298827e-2 + z*(-1.388731625493765e-3 + z*2.443315711809948e-5));
+  int q = int(mod(k, 4.0));
+  return q == 0 ? vec2(s, c) : q == 1 ? vec2(c, -s) : q == 2 ? vec2(-s, -c) : vec2(-c, s);
+}
+vec4 FB[NC];
+// the page's four waves per centre: features of one input vector x (25 used of 28)
+void fourier(float x[28]){
+  vec4 v[7];
+  for(int q = 0; q < 7; q++) v[q] = vec4(x[4*q], x[4*q+1], x[4*q+2], x[4*q+3]);
+  for(int i = 0; i < NC; i++){
+    float ph = 0.0;
+    for(int q = 0; q < 7; q++) ph += dot(Wt(O_FREQ + i*7 + q), v[q]);
+    float off = 2.0*float(i)*0.6283 + Wt(O_AMP + i).w*3.14159;
+    FB[i] = vec4(sincos_(ph + off).x, sincos_(ph + off*0.7).y, sincos_(ph*2.0 + off*1.3).x, sincos_(ph*2.0 + off*0.5).y);
+  }
+}
+// one pass of the paint head's first layer over a 56-vector, relu'd; accumulates layer 2
+void paintLayer(float x[56], inout vec4 d0, inout vec4 d1){
+  vec4 v[14];
+  for(int q = 0; q < 14; q++) v[q] = vec4(x[4*q], x[4*q+1], x[4*q+2], x[4*q+3]);
+  for(int j = 0; j < HW; j++){
+    float z = 0.0;
+    for(int q = 0; q < 14; q++) z += dot(Wt(O_W1 + j*14 + q), v[q]);
+    vec4 b = Wt(O_B1 + j/4);
+    z = max(z + b[j % 4], 0.0);
+    d0 += z*Wt(O_W2T + 2*j); d1 += z*Wt(O_W2T + 2*j + 1);
+  }
+}
+void main(){
+  ivec2 ij = ivec2(gl_FragCoord.xy);
+  vec4 s0 = texelFetch(uS0, ij, 0), s1 = texelFetch(uS1, ij, 0), s2 = texelFetch(uS2, ij, 0), s3 = texelFetch(uS3, ij, 0);
+  float m = s0.x;
+  if(!(m > 1e-12)){ o0 = vec4(0); o1 = vec4(0); o2 = vec4(0); o3 = vec4(0); o4 = vec4(0); return; }
+  vec2 vel = s0.yz/m;
+  float vn = sqrt(dot(vel, vel) + 1e-30);
+  vec2 ori = vn > 1e-12 ? vel/vn : vec2(0);
+  vec2 xy = vec2(ij);
+  if(uAbsOri == 1) ori = ori + (vec2(0, 1) - ori)*uOriMix;
+  else if(uAbsOri == 2){ vec2 pos = (xy + 0.5)/256.0*2.0 - 1.0; vec2 pn = pos/sqrt(dot(pos, pos) + 1e-12); ori = ori + (-pn - ori)*uOriMix; }
+  float on = sqrt(dot(ori, ori) + 1e-30);
+  vec2 fwd = on > 1e-12 ? ori/on : vec2(0);
+  vec2 left = vec2(fwd.y, -fwd.x);
+  vec2 o = ori*uSD, oq = vec2(o.y, -o.x);
+  vec2 lo = uCos*o + uSin*oq, ro = uCos*o - uSin*oq;
+  vec2 pl = xy + lo*uCells, pr = xy + ro*uCells;
+  // left eye
+  eye(pl);
+  vec2 TL = eT*uScale; float Lm = e0.x*uMG;
+  float Lh[6] = float[6](e0.w*uHG, e1.x*uHG, e1.y*uHG, e1.z*uHG, e1.w*uHG, e2.x*uHG);
+  float PL[7] = float[7](e2.y, e2.z, e2.w, e3.x, e3.y, e3.z, e3.w);
+  // right eye
+  eye(pr);
+  vec2 TR = eT*uScale; float Rm = e0.x*uMG;
+  float Rh[6] = float[6](e0.w*uHG, e1.x*uHG, e1.y*uHG, e1.z*uHG, e1.w*uHG, e2.x*uHG);
+  float PR[7] = float[7](e2.y, e2.z, e2.w, e3.x, e3.y, e3.z, e3.w);
+  vec2 L = vec2(TL.x*fwd.x + TL.y*fwd.y, TL.x*left.x + TL.y*left.y);
+  vec2 R = vec2(TR.x*fwd.x + TR.y*fwd.y, TR.x*left.x + TR.y*left.y);
+  float mo = m*uMG;
+  float h[6] = float[6](s0.w/m, s1.x/m, s1.y/m, s1.z/m, s1.w/m, s2.x/m);
+  // brain inputs: L(2) R(2) Lm Rm m h(6) Lh(6) Rh(6), and the mirrored world's
+  float xb[28], xm[28];
+  xb[0] = L.x; xb[1] = L.y; xb[2] = R.x; xb[3] = R.y; xb[4] = Lm; xb[5] = Rm; xb[6] = mo;
+  xm[0] = R.x; xm[1] = -R.y; xm[2] = L.x; xm[3] = -L.y; xm[4] = Rm; xm[5] = Lm; xm[6] = mo;
+  for(int k = 0; k < 6; k++){
+    xb[7+k] = h[k]; xb[13+k] = Lh[k]; xb[19+k] = Rh[k];
+    xm[7+k] = h[k]; xm[13+k] = Rh[k]; xm[19+k] = Lh[k];
+  }
+  for(int k = 25; k < 28; k++){ xb[k] = 0.0; xm[k] = 0.0; }
+  vec4 base = vec4(0), mir = vec4(0), F[NC];
+  fourier(xb);
+  for(int i = 0; i < NC; i++){ F[i] = FB[i]; base += Wt(O_AMP + i)*FB[i]; }
+  if(uSym){
+    fourier(xm);
+    for(int i = 0; i < NC; i++){ F[i] += FB[i]; mir += Wt(O_AMP + i)*FB[i]; }
+  }
+  float f0 = base.x + mir.x, f1 = base.y - mir.y, t0 = base.z + mir.z, t1 = base.w - mir.w;
+  vec2 force = (fwd*(f0*uAxial) + left*(f1*uLateral))*uFC;
+  vec2 strafe = (fwd*(t0*uAxial) + left*(t1*uLateral))*uSC;
+  // pressure: mass above rest, its 3x3 gradient (Sobel weights), wrapped
+  vec4 bm9 = vec4(0); float bmm = 0.0;   // also the 3x3 sums of paint (p3..p6 in bm9, p0..p2 below) and mass, for the paint
+  vec3 bp3 = vec3(0);
+  vec2 g = vec2(0);
+  for(int dy = -1; dy <= 1; dy++) for(int dx = -1; dx <= 1; dx++){
+    ivec2 c = wrapc(ij + ivec2(dx, dy));
+    float mc = texelFetch(uS0, c, 0).x;
+    bmm += mc; bp3 += texelFetch(uS2, c, 0).yzw; bm9 += texelFetch(uS3, c, 0);
+    if(dx == 0 && dy == 0) continue;
+    float P = max(mc - uRest, 0.0);
+    float wgt = (dx == 0 || dy == 0) ? 2.0 : 1.0;
+    g += wgt*P*vec2(dx, dy);
+  }
+  if(uPress) force = force - uPC*g/8.0;
+  vel = vel*uDrag + force;
+  float gz = uBB;
+  for(int i = 0; i < NC; i++) gz += dot(Wt(O_WB + i), F[i]);
+  float gate = 1.0/(1.0 + exp(-gz));
+  vel = vel*gate; strafe = strafe*gate;
+  vec2 disp = (vel + strafe*uStrafeP)*uCells;
+  // hidden: tanh(h + wh.feats + bh)
+  float hn[6];
+  for(int k = 0; k < 6; k++){
+    float d = Wt(O_BH + k/4)[k % 4];
+    for(int i = 0; i < NC; i++) d += dot(Wt(O_WH + k*NC + i), F[i]);
+    hn[k] = tanh_(h[k] + d);
+  }
+  // paint: reads asinh of the brain's inputs, its own paint, the paint under each eye, the 3x3 mean paint and mass
+  float bm = bmm/9.0, bmc = max(bm, 1e-6);
+  float pv[7] = float[7](s2.y/m, s2.z/m, s2.w/m, s3.x/m, s3.y/m, s3.z/m, s3.w/m);
+  for(int k = 0; k < 7; k++) pv[k] = clamp(pv[k], -0.995, 0.995);
+  float nbp[7] = float[7](bp3.x/9.0/bmc, bp3.y/9.0/bmc, bp3.z/9.0/bmc, bm9.x/9.0/bmc, bm9.y/9.0/bmc, bm9.z/9.0/bmc, bm9.w/9.0/bmc);
+  float pin[56];
+  for(int k = 0; k < 25; k++) pin[k] = asinh_(xb[k]);
+  for(int k = 0; k < 7; k++){ pin[25+k] = pv[k]; pin[32+k] = PL[k]; pin[39+k] = PR[k]; pin[46+k] = nbp[k]; }
+  pin[53] = bm; pin[54] = 0.0; pin[55] = 0.0;
+  vec4 d0 = vec4(0), d1 = vec4(0);
+  paintLayer(pin, d0, d1);
+  if(uSym){
+    for(int k = 0; k < 25; k++) pin[k] = asinh_(xm[k]);
+    for(int k = 0; k < 7; k++){ pin[32+k] = PR[k]; pin[39+k] = PL[k]; }
+    paintLayer(pin, d0, d1);
+  }
+  d0 += Wt(O_B2); d1 += Wt(O_B2 + 1);
+  float dp[7] = float[7](d0.x, d0.y, d0.z, d0.w, d1.x, d1.y, d1.z);
+  float pn[7];
+  for(int k = 0; k < 7; k++) pn[k] = tanh_(atanh(pv[k]) + dp[k]);
+  o0 = vec4(m, m*vel.x, m*vel.y, m*hn[0]);
+  o1 = vec4(m*hn[1], m*hn[2], m*hn[3], m*hn[4]);
+  o2 = vec4(m*hn[5], m*pn[0], m*pn[1], m*pn[2]);
+  o3 = vec4(m*pn[3], m*pn[4], m*pn[5], m*pn[6]);
+  o4 = vec4(disp, 0.0, 0.0);
+}`;
+
+// ---- 2. the move: every cell's 16 numbers land as a box of side uBox around where it goes,
+//         split over the cells under it by overlap. A scatter of points, added by blending.
+const VS_MOVE = HEAD + `
+uniform sampler2D uQ0, uQ1, uQ2, uQ3, uD; uniform float uBox; uniform int uK;
+flat out vec4 v0, v1, v2, v3;
+void taps(float q, float h, out float c0, out float w[4]){
+  q = mod(q, 256.0);
+  c0 = floor(q - h + 0.5);
+  float u = q - c0, s = 0.0;
+  for(int k = 0; k < 4; k++){ w[k] = k < uK ? max(min(u + h, float(k) + 0.5) - max(u - h, float(k) - 0.5), 0.0) : 0.0; s += w[k]; }
+  for(int k = 0; k < 4; k++) w[k] /= s;
+}
+void main(){
+  int id = gl_VertexID, KK = uK*uK, cell = id/KK, k = id - cell*KK;
+  ivec2 ij = ivec2(cell & 255, cell >> 8);
+  vec4 a = texelFetch(uQ0, ij, 0);
+  gl_PointSize = 1.0;
+  if(!(a.x > 1e-12)){ gl_Position = vec4(9.0, 9.0, 0.0, 1.0); v0 = v1 = v2 = v3 = vec4(0); return; }
+  vec2 d = texelFetch(uD, ij, 0).xy;
+  float h = 0.5*uBox, cx, cy, wx[4], wy[4];
+  taps(float(ij.x) + d.x, h, cx, wx); taps(float(ij.y) + d.y, h, cy, wy);
+  int kx = k % uK, ky = k / uK;
+  float w = wy[ky]*wx[kx];
+  if(w <= 0.0){ gl_Position = vec4(9.0, 9.0, 0.0, 1.0); v0 = v1 = v2 = v3 = vec4(0); return; }
+  vec2 t = mod(vec2(cx + float(kx), cy + float(ky)), 256.0);
+  gl_Position = vec4((t + 0.5)/256.0*2.0 - 1.0, 0.0, 1.0);
+  v0 = a*w; v1 = texelFetch(uQ1, ij, 0)*w; v2 = texelFetch(uQ2, ij, 0)*w; v3 = texelFetch(uQ3, ij, 0)*w;
+}`;
+const FS_MOVE = HEAD + `
+flat in vec4 v0, v1, v2, v3;
+layout(location=0) out vec4 o0; layout(location=1) out vec4 o1; layout(location=2) out vec4 o2; layout(location=3) out vec4 o3;
+void main(){ o0 = v0; o1 = v1; o2 = v2; o3 = v3; }`;
+
+// ---- 3. trail: blur, fade, take the new momentum
+const FS_TRAIL = HEAD + `
+uniform sampler2D uT, uS0; uniform float uK, uPersist, uDep;
+out vec4 o;
+void main(){
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec2 c = texelFetch(uT, p, 0).xy;
+  vec2 nb = texelFetch(uT, ivec2(p.x, (p.y + 255) & 255), 0).xy + texelFetch(uT, ivec2((p.x + 255) & 255, p.y), 0).xy;
+  nb += texelFetch(uT, ivec2(p.x, (p.y + 1) & 255), 0).xy;
+  nb += texelFetch(uT, ivec2((p.x + 1) & 255, p.y), 0).xy;
+  vec2 b = (c*uK + nb)/(4.0 + uK);
+  o = vec4(b*uPersist + texelFetch(uS0, p, 0).yz*uDep*7.07, 0.0, 0.0);
+}`;
+
+// ---- what you see
+const FS_VIEW = HEAD + `
+uniform sampler2D uS0, uS2, uTgt; uniform int uMode; uniform bool uSmooth, uShowTgt;
+uniform float uZoom, uCMax, uMMax, uBright; uniform vec2 uCam;
+in vec2 vUv; out vec4 o;
+vec4 fetch(sampler2D s, vec2 c){
+  if(!uSmooth) return texelFetch(s, ivec2(floor(c)), 0);
+  vec2 q = c - 0.5, f = floor(q), r = q - f; ivec2 i0 = ivec2(mod(f, 256.0)), i1 = ivec2(mod(f + 1.0, 256.0));
+  return mix(mix(texelFetch(s, i0, 0), texelFetch(s, ivec2(i1.x, i0.y), 0), r.x),
+             mix(texelFetch(s, ivec2(i0.x, i1.y), 0), texelFetch(s, i1, 0), r.x), r.y);
+}
+vec3 ramp(float x){ return clamp(vec3(x*1.6, x*1.25 - 0.1, x*1.8 - 0.8), 0.0, 1.0); }
+void main(){
+  vec2 c = 128.0 + ((vUv*2.0 - 1.0)*uZoom + uCam)*128.0;     // cell coordinates
+  if(c.x < 0.0 || c.y < 0.0 || c.x >= 256.0 || c.y >= 256.0){ o = vec4(0.012, 0.02, 0.024, 1); return; }
+  vec3 col;
+  if(uShowTgt){
+    vec4 t = fetch(uTgt, c);                // rgb premultiplied, alpha = target mass
+    col = uMode == 1 ? ramp(t.a/uMMax) : t.rgb/uCMax*uBright;
+  } else {
+    float m = fetch(uS0, c).x;
+    if(uMode == 1) col = ramp(m/uMMax);
+    else col = (m + fetch(uS2, c).yzw)*0.5/uCMax*uBright;
+  }
+  o = vec4(max(col, 0.0), 1.0);
+}`;
+const TONE = `
+vec3 inv_asinh(vec3 c, float t){ float l = length(c); return l>0.0 ? normalize(c)*sinh(l*t)/t : c; }
+vec3 fwd_asinh(vec3 c, float t){ float l = length(c); return l>0.0 ? c*asinh(l*t)/(l*t) : c; }`;
+const FS_TONE = HEAD + TONE + `
+uniform sampler2D uSrc; uniform float uSoft; uniform bool uOn; in vec2 vUv; out vec4 o;
+void main(){ vec3 c = texture(uSrc, vUv).rgb; o = vec4(uOn ? fwd_asinh(c*1.6, uSoft) : min(c, 1.0), 1.0); }`;
+const FS_DOWN = HEAD + TONE + `
+uniform sampler2D uSrc; uniform vec2 uTexel; uniform bool uThresh; uniform float uThreshold, uSoft; in vec2 vUv; out vec4 o;
+void main(){
+  vec3 a = texture(uSrc, vUv + uTexel*vec2(-0.5,-0.5)).rgb, b = texture(uSrc, vUv + uTexel*vec2(0.5,-0.5)).rgb,
+       c = texture(uSrc, vUv + uTexel*vec2(-0.5,0.5)).rgb,  d = texture(uSrc, vUv + uTexel*vec2(0.5,0.5)).rgb;
+  if(uThresh){ a=inv_asinh(a,uSoft); b=inv_asinh(b,uSoft); c=inv_asinh(c,uSoft); d=inv_asinh(d,uSoft); }
+  vec3 col = (a+b+c+d)*0.25;
+  if(uThresh){ float br = max(col.r, max(col.g, col.b)); col *= max(0.0, br-uThreshold)/max(br, 0.0001); }
+  o = vec4(col, 1.0);
+}`;
+const FS_UP = HEAD + `
+uniform sampler2D uSrc, uDst; uniform vec2 uTexel; uniform float uR; in vec2 vUv; out vec4 o;
+void main(){
+  float r = uR; vec3 s = vec3(0);
+  s += texture(uSrc, vUv + uTexel*vec2(-r,-r)).rgb; s += 2.0*texture(uSrc, vUv + uTexel*vec2(0,-r)).rgb;
+  s += texture(uSrc, vUv + uTexel*vec2(r,-r)).rgb;  s += 2.0*texture(uSrc, vUv + uTexel*vec2(-r,0)).rgb;
+  s += 4.0*texture(uSrc, vUv).rgb;                  s += 2.0*texture(uSrc, vUv + uTexel*vec2(r,0)).rgb;
+  s += texture(uSrc, vUv + uTexel*vec2(-r,r)).rgb;  s += 2.0*texture(uSrc, vUv + uTexel*vec2(0,r)).rgb;
+  s += texture(uSrc, vUv + uTexel*vec2(r,r)).rgb;
+  o = vec4(texture(uDst, vUv).rgb + s/16.0, 1.0);
+}`;
+const FS_COMPOSITE = HEAD + TONE + `
+uniform sampler2D uSrc, uBloom; uniform float uIntensity, uSoft; uniform bool uOn; in vec2 vUv; out vec4 o;
+void main(){
+  vec3 c = texture(uSrc, vUv).rgb;
+  if(uOn) c = fwd_asinh(inv_asinh(c, uSoft) + texture(uBloom, vUv).rgb*uIntensity, uSoft);
+  o = vec4(c, 1.0);
+}`;
+const VS_BLIT = `#version 300 es
+uniform vec4 uRect; out vec2 vUv;
+void main(){ vec2 p = vec2((gl_VertexID<<1)&2, gl_VertexID&2); vUv = p; gl_Position = vec4(uRect.xy + p*uRect.zw, 0.0, 1.0); }`;
+const FS_BLIT = `#version 300 es
+precision highp float; uniform sampler2D uSrc; in vec2 vUv; out vec4 o;
+void main(){ if(vUv.x>1.0||vUv.y>1.0) discard; o = vec4(texture(uSrc, vUv).rgb, 1.0); }`;
+
+function compile(vs, fs){
+  const mk = (t, s) => { const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh);
+    if(!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) fail("Shader failed to compile:\n" + gl.getShaderInfoLog(sh)); return sh; };
+  const p = gl.createProgram(); gl.attachShader(p, mk(gl.VERTEX_SHADER, vs)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p); if(!gl.getProgramParameter(p, gl.LINK_STATUS)) fail("Program failed to link:\n" + gl.getProgramInfoLog(p));
+  const u = {}; const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for(let i=0;i<n;i++){ const name = gl.getActiveUniform(p, i).name.replace(/\[0\]$/, ""); u[name] = gl.getUniformLocation(p, gl.getActiveUniform(p, i).name); }
+  return {p, u};
+}
+const P = {
+  brain: compile(VS_QUAD, FS_BRAIN), move: compile(VS_MOVE, FS_MOVE), trail: compile(VS_QUAD, FS_TRAIL),
+  view: compile(VS_QUAD, FS_VIEW), tone: compile(VS_QUAD, FS_TONE), down: compile(VS_QUAD, FS_DOWN), up: compile(VS_QUAD, FS_UP),
+  comp: compile(VS_QUAD, FS_COMPOSITE), blit: compile(VS_BLIT, FS_BLIT),
+};
+const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+
+// ---------------------------------------------------------------- GPU resources
+function tex(w, h, ifmt, fmt, type, filter, data=null){
+  const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, type, data);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  t.w = w; t.h = h; return t;
+}
+function fbo(...ts){
+  const f = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+  ts.forEach((t, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0+i, gl.TEXTURE_2D, t, 0));
+  gl.drawBuffers(ts.map((_, i) => gl.COLOR_ATTACHMENT0+i));
+  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) fail("Framebuffer incomplete.");
+  f.w = ts[0].w; f.h = ts[0].h; return f;
+}
+const rgba32 = (w, h, data=null) => tex(w, h, gl.RGBA32F, gl.RGBA, gl.FLOAT, gl.NEAREST, data);
+const rgba16 = (w, h) => tex(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR);
+
+const st = [0, 1].map(() => [0, 1, 2, 3].map(() => rgba32(N, N)));     // [ping-pong][texture]
+const stF = st.map(ts => fbo(...ts));
+const Q = [0, 1, 2, 3, 4].map(() => rgba32(N, N)), QF = fbo(...Q);
+const trl = [0, 1].map(() => tex(N, N, gl.RG32F, gl.RG, gl.FLOAT, gl.NEAREST)), trlF = trl.map(t => fbo(t));
+const wTex = rgba32(256, W.rows, W.data);
+
+// the seed: the model's own state at t = 0 over its patch, zero elsewhere
+const SEED = (() => {
+  const s = dec(G.seed), [C, S] = [s.shape[0], s.shape[1]], o = G.seed_s0;
+  const out = [0, 1, 2, 3].map(() => new Float32Array(N*N*4));
+  for(let c = 0; c < C; c++) for(let y = 0; y < S; y++) for(let x = 0; x < S; x++)
+    out[c >> 2][((y + o)*N + x + o)*4 + (c & 3)] = s[(c*S + y)*S + x];
+  return out;
+})();
+
+// the target: gecko.png, row 0 at the bottom, centred; mass = alpha, colour = rgb*alpha
+const TGT = (() => {
+  const t = G.target, b = atob(t.rgba), m = new Float32Array(N*N), rgb = new Float32Array(3*N*N), tex4 = new Float32Array(N*N*4);
+  const img = new ImageData(t.w, t.h);
+  for(let i = 0; i < b.length; i++) img.data[i] = b.charCodeAt(i);
+  for(let r = 0; r < t.h; r++) for(let x = 0; x < t.w; x++){
+    const k = (r*t.w + x)*4, y = t.h - 1 - r + t.off, cx = x + t.off, i = y*N + cx;
+    const a = img.data[k + 3]/255;
+    m[i] = a;
+    for(let c = 0; c < 3; c++){ rgb[c*N*N + i] = img.data[k + c]/255*a; tex4[i*4 + c] = rgb[c*N*N + i]; }
+    tex4[i*4 + 3] = a;
+  }
+  let mm = 0, cm = 0; for(let i = 0; i < N*N; i++) mm = Math.max(mm, m[i]); for(const v of rgb) cm = Math.max(cm, v);
+  return {m, rgb, img, tex: rgba32(N, N, tex4), mmax: mm, cmax: cm};
+})();
+
+let D = null;
+function buildDisplay(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.max(1, Math.round(cv.clientWidth*dpr)); cv.height = Math.max(1, Math.round(cv.clientHeight*dpr));
+  const S = Math.max(64, Math.min(2048, Math.min(cv.width, cv.height)));
+  const lin = rgba16(S, S), tone = rgba16(S, S), copy = rgba16(S, S), comp = rgba16(S, S);
+  const mips = [], ups = []; let m = S;
+  for(let i=0;i<5;i++){ m = Math.max(1, m>>1); mips.push(rgba16(m, m)); ups.push(rgba16(m, m)); }
+  D = { S, lin, tone, copy, comp, mips, ups, linF: fbo(lin), toneF: fbo(tone), copyF: fbo(copy), compF: fbo(comp),
+        mipF: mips.map(t => fbo(t)), upF: ups.map(t => fbo(t)) };
+}
+
+// ---------------------------------------------------------------- the step
+let cur = 0, tcur = 0, step = 0;
+function bindTex(unit, t, prog, name){ gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(prog.u[name], unit); }
+function target(f){ gl.bindFramebuffer(gl.FRAMEBUFFER, f); gl.viewport(0, 0, f ? f.w : cv.width, f ? f.h : cv.height); }
+function upload(t, data){ gl.bindTexture(gl.TEXTURE_2D, t); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, N, N, gl.RGBA, gl.FLOAT, data); }
+
+function restart(){
+  cur = 0; tcur = 0; step = 0;
+  for(let k = 0; k < 4; k++) upload(st[0][k], SEED[k]);
+  target(trlF[0]); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+  lossAt = -1;
+}
+
+const nt = G.nt, box = Math.min(G.phys.spread, nt - 1);
+function physicsStep(){
+  gl.disable(gl.BLEND);
+  // 1. brain
+  let pr = P.brain; gl.useProgram(pr.p);
+  for(let k = 0; k < 4; k++) bindTex(k, st[cur][k], pr, "uS" + k);
+  bindTex(4, trl[tcur], pr, "uT"); bindTex(5, wTex, pr, "uW");
+  const U = pr.u, ph = G.phys;
+  gl.uniform1f(U.uCos, D_.cos_a); gl.uniform1f(U.uSin, D_.sin_a); gl.uniform1f(U.uSD, D_.sd); gl.uniform1f(U.uScale, D_.scaling);
+  gl.uniform1f(U.uFC, D_.fcoef); gl.uniform1f(U.uSC, D_.scoef); gl.uniform1f(U.uAxial, ph.axial); gl.uniform1f(U.uLateral, ph.lateral);
+  gl.uniform1f(U.uDrag, ph.drag); gl.uniform1f(U.uStrafeP, ph.strafe); gl.uniform1f(U.uMG, G.mgain); gl.uniform1f(U.uHG, G.hgain);
+  gl.uniform1f(U.uBB, G.bb); gl.uniform1f(U.uPC, D_.pcoef); gl.uniform1f(U.uRest, G.rest); gl.uniform1f(U.uOriMix, G.orimix);
+  gl.uniform1f(U.uCells, D_.cells); gl.uniform1i(U.uAbsOri, G.absori); gl.uniform1i(U.uSym, G.sym ? 1 : 0); gl.uniform1i(U.uPress, G.pressure_on ? 1 : 0);
+  target(QF); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  // 2. move
+  const nx = 1 - cur;
+  target(stF[nx]); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+  pr = P.move; gl.useProgram(pr.p);
+  for(let k = 0; k < 4; k++) bindTex(k, Q[k], pr, "uQ" + k);
+  bindTex(4, Q[4], pr, "uD"); gl.uniform1f(pr.u.uBox, box); gl.uniform1i(pr.u.uK, nt);
+  gl.enable(gl.BLEND); gl.blendEquation(gl.FUNC_ADD); gl.blendFunc(gl.ONE, gl.ONE);
+  gl.drawArrays(gl.POINTS, 0, nt*nt*N*N);
+  gl.disable(gl.BLEND);
+  cur = nx;
+  // 3. trail
+  const tn = 1 - tcur;
+  pr = P.trail; gl.useProgram(pr.p);
+  bindTex(0, trl[tcur], pr, "uT"); bindTex(1, st[cur][0], pr, "uS0");
+  gl.uniform1f(pr.u.uK, D_.K); gl.uniform1f(pr.u.uPersist, D_.persist); gl.uniform1f(pr.u.uDep, D_.deposit);
+  target(trlF[tn]); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  tcur = tn;
+  step++;
+}
+
+// ---------------------------------------------------------------- readback and loss (the training loss)
+function readTex(t){
+  const f = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+  const b = new Float32Array(N*N*4); gl.readPixels(0, 0, N, N, gl.RGBA, gl.FLOAT, b);
+  gl.deleteFramebuffer(f); return b;
+}
+function fields(){   // mass [N*N] and render rgb [3*N*N], channel-major, row 0 at the bottom
+  const a = readTex(st[cur][0]), c = readTex(st[cur][2]);
+  const m = new Float32Array(N*N), rgb = new Float32Array(3*N*N);
+  for(let i = 0; i < N*N; i++){ m[i] = a[4*i]; for(let k = 0; k < 3; k++) rgb[k*N*N + i] = (a[4*i] + c[4*i + 1 + k])*0.5; }
+  return {m, rgb};
+}
+function msLoss(x, t, C){   // multiscale MSE over the target's power, scales 1 2 4 8 (avg pool)
+  let L = 0;
+  for(const s of [1, 2, 4, 8]){
+    const n = N/s; let num = 0, den = 0;
+    for(let c = 0; c < C; c++) for(let by = 0; by < n; by++) for(let bx = 0; bx < n; bx++){
+      let a = 0, b = 0;
+      for(let y = 0; y < s; y++) for(let xx = 0; xx < s; xx++){ const i = c*N*N + (by*s + y)*N + bx*s + xx; a += x[i]; b += t[i]; }
+      a /= s*s; b /= s*s; num += (a - b)*(a - b); den += b*b;
+    }
+    L += num/den;
+  }
+  return L/4;
+}
+let lossAt = -1, lossM = NaN, lossC = NaN, totalMass = G.total_mass;
+function measure(){
+  const f = fields(); lossM = msLoss(f.m, TGT.m, 1); lossC = msLoss(f.rgb, TGT.rgb, 3); lossAt = step;
+  let s = 0; for(const v of f.m) s += v; totalMass = s;
+}
+
+// ---------------------------------------------------------------- display
+const look = { speed: 2, restart_at: 0, mode: 0, brightness: 1.0, glow: false, smooth: false, show_target: false, loss: true };
+const cam = { x: 0, y: 0, zoom: 0.625 };   // zoom 0.625: the central 160 cells, as in the training pictures
+function present(){
+  let pr = P.view; gl.useProgram(pr.p); gl.disable(gl.BLEND);
+  bindTex(0, st[cur][0], pr, "uS0"); bindTex(1, st[cur][2], pr, "uS2"); bindTex(2, TGT.tex, pr, "uTgt");
+  gl.uniform1i(pr.u.uMode, look.mode); gl.uniform1i(pr.u.uSmooth, look.smooth ? 1 : 0); gl.uniform1i(pr.u.uShowTgt, look.show_target ? 1 : 0);
+  gl.uniform1f(pr.u.uZoom, cam.zoom); gl.uniform2f(pr.u.uCam, cam.x, cam.y);
+  gl.uniform1f(pr.u.uCMax, TGT.cmax); gl.uniform1f(pr.u.uMMax, TGT.mmax*1.2); gl.uniform1f(pr.u.uBright, look.brightness);
+  target(D.linF); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  const soft = 2.5;
+  pr = P.tone; gl.useProgram(pr.p); bindTex(0, D.lin, pr, "uSrc"); gl.uniform1f(pr.u.uSoft, soft); gl.uniform1i(pr.u.uOn, look.glow ? 1 : 0);
+  target(D.toneF); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if(look.glow){
+    pr = P.down; gl.useProgram(pr.p); gl.uniform1f(pr.u.uSoft, soft); gl.uniform1f(pr.u.uThreshold, 0.11);
+    bindTex(0, D.tone, pr, "uSrc"); gl.uniform2f(pr.u.uTexel, 1/D.S, 1/D.S); gl.uniform1i(pr.u.uThresh, 0);
+    target(D.copyF); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    for(let i=0;i<5;i++){
+      const src = i===0 ? D.copy : D.mips[i-1];
+      bindTex(0, src, pr, "uSrc"); gl.uniform2f(pr.u.uTexel, 1/src.w, 1/src.h); gl.uniform1i(pr.u.uThresh, i===0 ? 1 : 0);
+      target(D.mipF[i]); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    pr = P.up; gl.useProgram(pr.p); gl.uniform1f(pr.u.uR, 1.0);
+    let src = D.mips[4];
+    for(let i=4;i>0;i--){
+      bindTex(0, src, pr, "uSrc"); bindTex(1, D.mips[i-1], pr, "uDst"); gl.uniform2f(pr.u.uTexel, 1/src.w, 1/src.h);
+      target(D.upF[i-1]); gl.drawArrays(gl.TRIANGLES, 0, 3); src = D.ups[i-1];
+    }
+  }
+  pr = P.comp; gl.useProgram(pr.p);
+  bindTex(0, D.tone, pr, "uSrc"); bindTex(1, D.ups[0], pr, "uBloom"); gl.uniform1i(pr.u.uOn, look.glow ? 1 : 0);
+  gl.uniform1f(pr.u.uIntensity, 0.23); gl.uniform1f(pr.u.uSoft, soft);
+  target(D.compF); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  pr = P.blit; gl.useProgram(pr.p);
+  target(null); gl.clearColor(0.012,0.02,0.024,1); gl.clear(gl.COLOR_BUFFER_BIT);
+  const s = Math.min(cv.width, cv.height), sx = s/cv.width*2, sy = s/cv.height*2;
+  gl.uniform4f(pr.u.uRect, -sx/2, -sy/2, sx, sy);
+  bindTex(0, D.comp, pr, "uSrc"); gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+// ---------------------------------------------------------------- UI
+const $ = id => document.getElementById(id);
+const ctl = {};
+function rowSlider(parent, key, label, lo, hi, stp, obj, onChange){
+  const d = document.createElement("div"); d.className = "row";
+  d.innerHTML = `<label for="s-${key}" title="${label}">${label}</label><input id="s-${key}" type="range" min="${lo}" max="${hi}" step="${stp}"><input id="n-${key}" type="number" step="${stp}" aria-label="${label} value">`;
+  parent.appendChild(d);
+  const r = d.children[1], n = d.children[2];
+  const set = v => { obj[key] = v; onChange && onChange(); };
+  r.addEventListener("input", () => { n.value = +r.value; set(+r.value); });
+  n.addEventListener("change", () => { const v = +n.value; if(v < +r.min) r.min = v; if(v > +r.max) r.max = v; r.value = v; set(v); });
+  ctl[key] = {r, n, lo, hi, obj};
+}
+function rowSelect(parent, key, label, options, obj, onChange){
+  const d = document.createElement("label"); d.className = "sel";
+  d.innerHTML = `<span>${label}</span><select id="x-${key}">${options.map((o,i) => `<option value="${i}">${o}</option>`).join("")}</select>`;
+  parent.appendChild(d); const s = d.querySelector("select");
+  s.addEventListener("change", () => { obj[key] = +s.value; onChange && onChange(); });
+  ctl[key] = {s, obj};
+}
+function rowCheck(parent, key, label, obj, onChange){
+  const d = document.createElement("label"); d.className = "chk";
+  d.innerHTML = `<input id="k-${key}" type="checkbox"><span>${label}</span>`;
+  parent.appendChild(d); const c = d.querySelector("input");
+  c.addEventListener("change", () => { obj[key] = c.checked; onChange && onChange(); });
+  ctl[key] = {c, obj};
+}
+function syncUI(){
+  for(const k in ctl){
+    const c = ctl[k], v = c.obj[k];
+    if(c.r){ c.r.min = Math.min(c.lo, v); c.r.max = Math.max(c.hi, v); c.r.value = v; c.n.value = +(+v).toFixed(4); }
+    else if(c.s) c.s.value = String(+v);
+    else if(c.c) c.c.checked = !!v;
+  }
+}
+const gR = $("g-run"), gV = $("g-view");
+gR.style.display = "flex"; gR.style.flexDirection = "column"; gR.style.gap = "6px";
+gV.style.display = "flex"; gV.style.flexDirection = "column"; gV.style.gap = "6px";
+rowSlider(gR, "speed", "steps/frame", 1, 20, 1, look);
+rowSlider(gR, "restart_at", "restart at", 0, 2000, 50, look);
+rowCheck(gR, "loss", "measure the loss every 8 steps", look);
+rowSelect(gV, "mode", "show", ["mass × colour", "mass"], look);
+rowSlider(gV, "brightness", "brightness", 0.2, 4, 0.01, look);
+rowCheck(gV, "glow", "glow (tonemap + bloom)", look);
+rowCheck(gV, "smooth", "smooth cells", look);
+rowCheck(gV, "show_target", "show the target (T)", look);
+ctl.restart_at.r.title = "restart from the seed at this step (0 = never)";
+syncUI();
+
+// the target inset
+{ const c = $("tgt"), x = c.getContext("2d"); x.putImageData(TGT.img, 0, 0);
+  c.onclick = () => { look.show_target = !look.show_target; syncUI(); }; }
+{ const tl = G.torch_loss || {}, f = k => tl[k] ? `${tl[k][0].toFixed(3)} / ${tl[k][1].toFixed(3)}` : "?";
+  $("about").innerHTML = `Model: <b>${G.source}</b> (preset ${G.preset}, 10 Fourier centres, 6 hidden channels, a brake, pressure above mass ${G.rest}, a paint head of ${HW} units carrying 3 colours + 4 paint-hidden). `
+    + `The loss is the training loss: multiscale MSE over the target's power, mass / colour. In torch it is <b>${f("96")}</b> at step 96 and <b>${f("300")}</b> at step 300; `
+    + `float rounding differs on the GPU and the dynamics are chaotic, so the numbers here drift a little from those. Trained to look right up to step ~500.`
+    + ` <a href="index.html">Overview</a> · <a href="fluoddity-ca-next.html">the simulator</a>`; }
+
+let paused = false, flashMsg = "", flashT = 0;
+function flash(m){ flashMsg = m; flashT = performance.now(); }
+const act = {
+  pause(){ paused = !paused; $("b-pause").textContent = paused ? "play" : "pause"; },
+  reset(){ restart(); flash("restarted from the seed"); },
+  one(){ if(!paused) act.pause(); physicsStep(); },
+};
+$("b-pause").onclick = act.pause; $("b-reset").onclick = act.reset; $("b-step").onclick = act.one;
+$("toggle").onclick = () => document.body.classList.remove("hidep");
+window.addEventListener("keydown", e => {
+  if(e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  const k = e.key.toLowerCase();
+  if(k === "r") act.reset(); else if(k === " "){ e.preventDefault(); act.pause(); } else if(k === ".") act.one();
+  else if(k === "t"){ look.show_target = !look.show_target; syncUI(); }
+  else if(k === "h") document.body.classList.toggle("hidep");
+});
+let drag = null;
+cv.addEventListener("pointerdown", e => { drag = {x:e.clientX, y:e.clientY, cx:cam.x, cy:cam.y}; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", e => {
+  if(!drag) return; const r = cv.getBoundingClientRect(), s = Math.min(r.width, r.height);
+  cam.x = drag.cx - (e.clientX - drag.x)/s*2*cam.zoom; cam.y = drag.cy + (e.clientY - drag.y)/s*2*cam.zoom;
+});
+cv.addEventListener("pointerup", () => { drag = null; });
+cv.addEventListener("dblclick", () => { cam.x = 0; cam.y = 0; cam.zoom = 0.625; });
+cv.addEventListener("wheel", e => {
+  e.preventDefault(); const r = cv.getBoundingClientRect(), s = Math.min(r.width, r.height);
+  const nx = ((e.clientX - r.left) - (r.width - s)/2)/s*2 - 1, ny = 1 - ((e.clientY - r.top) - (r.height - s)/2)/s*2;
+  const wx = nx*cam.zoom + cam.x, wy = ny*cam.zoom + cam.y;
+  cam.zoom = Math.min(1.2, Math.max(0.05, cam.zoom*Math.exp(e.deltaY*0.0015)));
+  cam.x = wx - nx*cam.zoom; cam.y = wy - ny*cam.zoom;
+}, {passive:false});
+let resizeT = 0;
+new ResizeObserver(() => { clearTimeout(resizeT); resizeT = setTimeout(buildDisplay, 60); }).observe(cv);
+
+// ---------------------------------------------------------------- go
+buildDisplay(); restart();
+let win = {t: performance.now(), f: 0, s: 0}, fps = 0, sps = 0;
+function loop(){
+  const n = paused ? 0 : Math.max(1, Math.round(look.speed));
+  for(let i = 0; i < n; i++){
+    physicsStep();
+    if(look.restart_at > 0 && step >= look.restart_at) restart();
+  }
+  if(look.loss && step !== lossAt && (step % 8 === 0 || paused || lossAt < 0 || step - lossAt >= 8)) measure();
+  present();
+  const now = performance.now(); win.f++; win.s += n;
+  if(now - win.t >= 1000){ fps = win.f*1000/(now - win.t); sps = win.s*1000/(now - win.t); win = {t: now, f: 0, s: 0}; }
+  const msg = performance.now() - flashT < 1800 ? " · " + flashMsg : "";
+  $("stat1").textContent = `step ${step} · ${paused ? "paused" : sps.toFixed(0) + " steps/s"} · ${fps.toFixed(0)} fps` + msg;
+  $("stat2").textContent = look.loss && lossAt >= 0 ? `loss at ${lossAt}: mass ${lossM.toFixed(3)} · colour ${lossC.toFixed(3)}` : "loss: off";
+  $("stat3").textContent = `${N}² cells · mass ${totalMass.toFixed(1)} of ${G.total_mass.toFixed(1)}` + (look.show_target ? " · target" : "");
+  requestAnimationFrame(loop);
+}
+const b64f = a => { const u = new Uint8Array(a.buffer); let s = ""; for(let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+window.__g = {
+  get t(){ return step; }, restart, look, cam,
+  step: n => { for(let i = 0; i < n; i++) physicsStep(); gl.finish(); return step; },
+  read: () => { const f = fields(); return {step, m: b64f(f.m), rgb: b64f(f.rgb)}; },
+  readQ: k => b64f(readTex(Q[k])),
+  loss: () => { measure(); return [lossM, lossC, totalMass]; },
+  snap: () => { present(); return cv.toDataURL("image/png"); },
+};
+if(!new URLSearchParams(location.search).has("manual")) requestAnimationFrame(loop);
+</script>

@@ -45,6 +45,7 @@ footer{ margin-top:3rem; color:var(--muted); font-size:.88rem; }
 <p class="sub">A physarum-like particle system rebuilt as a cellular automaton: mass and velocity per cell, no particles.</p>
 <p class="links">
   <a href="fluoddity-ca-next.html"><b>Open the simulator →</b></a>
+  <a href="gecko.html"><b>Watch the trained gecko →</b></a>
   <a href="https://github.com/ichko/fluoddity-ca">source</a>
 </p>
 
@@ -136,6 +137,7 @@ step():
 </table>
 <figure><img src="train/fca_gecko_best_colour.gif" alt="The gecko growing in colour"><figcaption>The latest fit: it grows from a disc, holds its shape to step 500, and is coloured by three channels carried with the mass. The loss is plotted live underneath.</figcaption></figure>
 <p>Training with a sample pool, a one-cell move and a pixel-level loss term made the shape stable. The mass loss is 0.083 at step 96 and 0.131 at step 500, against 0.100 and 0.238 before. Colour comes from three channels carried along with the mass, trained on top, with a colour loss of 0.07. It doesn't yet have the red spots, toes or crisp edges.</p>
+<p><a href="gecko.html"><b>Watch the trained gecko →</b></a> The same model running live in your browser (WebGL2), step for step as in training.</p>
 <p>Neither part draws the gecko alone. The brain with a symmetric launch grows a star, and the learned launch without the brain smears into a blob. The rule is symmetric, so the launch velocity is the hint that gives the animal a front.</p>
 <figure><img src="train/fca_gecko_hidden6_ablate.png" alt="Ablation"><figcaption>Full model, brain off, launch reset to radial, and both.</figcaption></figure>
 
