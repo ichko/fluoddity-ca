@@ -79,6 +79,12 @@ body.hidep #toggle{display:block}
       <div class="note">A disc of mass, 27 cells across, grows into the gecko. Every cell runs the same trained rule: Fluoddity's Fourier brain reads the trail, the mass and six hidden numbers through two eyes, accelerates, and pushes its mass to where it lands. A small paint head carries the colour along. Nothing tells a cell where it is.</div>
     </div>
     <div class="grp">
+      <h2>Damage</h2>
+      <div id="g-dmg"></div>
+      <div class="btns"><button id="b-cut-rand" type="button" title="cut a random hole in the body">random hole</button></div>
+      <div class="note">Pick <b>cut</b> (or press <b>D</b>) and drag over the gecko to wipe cells: their mass, velocity, hidden and colour channels, and the trail under them. The mass is gone for good, as with a real cut. Shift-drag still pans.</div>
+    </div>
+    <div class="grp">
       <h2>Physics</h2>
       <div id="g-phys"></div>
       <div class="btns"><button id="b-trained" type="button">reset to trained values</button></div>
@@ -351,6 +357,22 @@ layout(location=0) out vec4 o0; layout(location=1) out vec4 o1; layout(location=
 void main(){ o0 = v0; o1 = v1; o2 = v2; o3 = v3; }`;
 
 // ---- 3. trail: blur, fade, take the new momentum
+// ---- damage: wipe a disc of cells -- every per-cell number (mass, momentum, hidden, colour)
+const ERASE = `
+uniform vec3 uCut;   // centre x, y in cells, radius in cells
+bool inside(){ vec2 d = abs(gl_FragCoord.xy - uCut.xy); d = min(d, 256.0 - d); return dot(d, d) < uCut.z*uCut.z; }`;
+const FS_ERASE = HEAD + ERASE + `
+uniform sampler2D uS0, uS1, uS2, uS3;
+layout(location=0) out vec4 o0; layout(location=1) out vec4 o1; layout(location=2) out vec4 o2; layout(location=3) out vec4 o3;
+void main(){
+  ivec2 p = ivec2(gl_FragCoord.xy); bool z = inside();
+  o0 = z ? vec4(0) : texelFetch(uS0, p, 0); o1 = z ? vec4(0) : texelFetch(uS1, p, 0);
+  o2 = z ? vec4(0) : texelFetch(uS2, p, 0); o3 = z ? vec4(0) : texelFetch(uS3, p, 0);
+}`;
+const FS_ERASE_T = HEAD + ERASE + `
+uniform sampler2D uT; out vec4 o;
+void main(){ o = inside() ? vec4(0) : texelFetch(uT, ivec2(gl_FragCoord.xy), 0); }`;
+
 const FS_TRAIL = HEAD + `
 uniform sampler2D uT, uS0; uniform float uK, uPersist, uDep;
 out vec4 o;
@@ -367,7 +389,7 @@ void main(){
 // ---- what you see
 const FS_VIEW = HEAD + `
 uniform sampler2D uS0, uS2, uTgt; uniform int uMode; uniform bool uSmooth, uShowTgt;
-uniform float uZoom, uCMax, uMMax, uBright; uniform vec2 uCam;
+uniform float uZoom, uCMax, uMMax, uBright; uniform vec2 uCam; uniform vec3 uBrush;   // brush ring: x, y, r in cells (r 0 = none)
 in vec2 vUv; out vec4 o;
 vec4 fetch(sampler2D s, vec2 c){
   if(!uSmooth) return texelFetch(s, ivec2(floor(c)), 0);
@@ -387,6 +409,10 @@ void main(){
     float m = fetch(uS0, c).x;
     if(uMode == 1) col = ramp(m/uMMax);
     else col = (m + fetch(uS2, c).yzw)*0.5/uCMax*uBright;
+  }
+  if(uBrush.z > 0.0){
+    float d = abs(length(c - uBrush.xy) - uBrush.z), w = max(0.6, uZoom*1.2);
+    col = mix(col, vec3(1.0, 0.45, 0.35), clamp(1.0 - d/w, 0.0, 1.0)*0.85);
   }
   o = vec4(max(col, 0.0), 1.0);
 }`;
@@ -442,7 +468,7 @@ function compile(vs, fs){
 }
 const P = {
   brain: compile(VS_QUAD, FS_BRAIN), move: compile(VS_MOVE, FS_MOVE), trail: compile(VS_QUAD, FS_TRAIL),
-  view: compile(VS_QUAD, FS_VIEW), tone: compile(VS_QUAD, FS_TONE), down: compile(VS_QUAD, FS_DOWN), up: compile(VS_QUAD, FS_UP),
+  view: compile(VS_QUAD, FS_VIEW), erase: compile(VS_QUAD, FS_ERASE), eraseT: compile(VS_QUAD, FS_ERASE_T), tone: compile(VS_QUAD, FS_TONE), down: compile(VS_QUAD, FS_DOWN), up: compile(VS_QUAD, FS_UP),
   comp: compile(VS_QUAD, FS_COMPOSITE), blit: compile(VS_BLIT, FS_BLIT),
 };
 const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
@@ -535,6 +561,20 @@ function derived(){
            scaling: SQ*38.855*PH.gain, fcoef: 1/SQ*PH.gfm/400, scoef: 1/SQ*PH.gfm/20, pcoef: PH.press*(2/N),
            K: dd > 1e-7 ? 4/(Math.pow(5, dd) - 1) : 1e7, persist: PH.persist, deposit: 1 - pc, cells: N/2 };
 }
+// wipe a disc at (x, y) cells: all of the state, and the trail under it if asked
+function damage(x, y, r){
+  gl.disable(gl.BLEND);
+  let pr = P.erase; gl.useProgram(pr.p);
+  for(let k = 0; k < 4; k++) bindTex(k, st[cur][k], pr, "uS" + k);
+  gl.uniform3f(pr.u.uCut, x, y, r);
+  const nx = 1 - cur; target(stF[nx]); gl.drawArrays(gl.TRIANGLES, 0, 3); cur = nx;
+  if(look.cut_trail){
+    pr = P.eraseT; gl.useProgram(pr.p); bindTex(0, trl[tcur], pr, "uT"); gl.uniform3f(pr.u.uCut, x, y, r);
+    const tn = 1 - tcur; target(trlF[tn]); gl.drawArrays(gl.TRIANGLES, 0, 3); tcur = tn;
+  }
+  cuts++;
+}
+let cuts = 0;
 function physicsStep(){
   const D_ = derived();
   const box = Math.max(1, Math.min(3, PH.spread)), nt = Math.min(4, Math.floor(box) + 1 + (box % 1 > 0 ? 1 : 0));
@@ -603,13 +643,15 @@ function measure(){
 }
 
 // ---------------------------------------------------------------- display
-const look = { speed: 30, restart_at: 0, mode: 0, brightness: 1.0, glow: false, smooth: false, show_target: false, loss: true };
-const cam = { x: 0, y: 0, zoom: 0.625 };   // zoom 0.625: the central 160 cells, as in the training pictures
+const look = { tool: 0, brush: 12, cut_trail: true, speed: 30, restart_at: 0, mode: 0, brightness: 1.0, glow: false, smooth: false, show_target: false, loss: true };
+const cam = { x: 0, y: 0, zoom: 0.625 };
+const brush = { x: 0, y: 0, on: false };   // zoom 0.625: the central 160 cells, as in the training pictures
 function present(){
   let pr = P.view; gl.useProgram(pr.p); gl.disable(gl.BLEND);
   bindTex(0, st[cur][0], pr, "uS0"); bindTex(1, st[cur][2], pr, "uS2"); bindTex(2, TGT.tex, pr, "uTgt");
   gl.uniform1i(pr.u.uMode, look.mode); gl.uniform1i(pr.u.uSmooth, look.smooth ? 1 : 0); gl.uniform1i(pr.u.uShowTgt, look.show_target ? 1 : 0);
   gl.uniform1f(pr.u.uZoom, cam.zoom); gl.uniform2f(pr.u.uCam, cam.x, cam.y);
+  gl.uniform3f(pr.u.uBrush, brush.x, brush.y, look.tool === 1 && brush.on ? look.brush : 0);
   gl.uniform1f(pr.u.uCMax, TGT.cmax); gl.uniform1f(pr.u.uMMax, TGT.mmax*1.2); gl.uniform1f(pr.u.uBright, look.brightness);
   target(D.linF); gl.drawArrays(gl.TRIANGLES, 0, 3);
   const soft = 2.5;
@@ -690,6 +732,15 @@ rowCheck(gV, "glow", "glow (tonemap + bloom)", look);
 rowCheck(gV, "smooth", "smooth cells", look);
 rowCheck(gV, "show_target", "show the target (T)", look);
 ctl.restart_at.r.title = "restart from the seed at this step (0 = never)";
+const gD = $("g-dmg"); gD.style.display = "flex"; gD.style.flexDirection = "column"; gD.style.gap = "6px";
+rowSelect(gD, "tool", "mouse", ["pan / zoom", "cut"], look, () => { cv.style.cursor = look.tool === 1 ? "none" : "crosshair"; });
+rowSlider(gD, "brush", "brush (cells)", 1, 48, 1, look);
+rowCheck(gD, "cut_trail", "also wipe the trail under the cut", look);
+$("b-cut-rand").onclick = () => {   // a disc on a random cell that holds mass
+  const m = fields().m; let tot = 0; for(const v of m) tot += Math.max(0, v);
+  let r = Math.random()*tot, i = 0; for(; i < m.length; i++){ r -= Math.max(0, m[i]); if(r <= 0) break; }
+  damage(i % N + 0.5, Math.floor(i/N) + 0.5, look.brush); flash("random hole");
+};
 const gP = $("g-phys"); gP.style.display = "flex"; gP.style.flexDirection = "column"; gP.style.gap = "6px";
 const mark = () => { edited = Object.keys(TRAINED).some(k => PH[k] !== TRAINED[k]); };
 for(const [k, label, lo, hi, s] of [
@@ -726,15 +777,38 @@ window.addEventListener("keydown", e => {
   if(k === "r") act.reset(); else if(k === " "){ e.preventDefault(); act.pause(); } else if(k === ".") act.one();
   else if(k === "t"){ look.show_target = !look.show_target; syncUI(); }
   else if(k === "h") document.body.classList.toggle("hidep");
+  else if(k === "d"){ look.tool = 1 - look.tool; cv.style.cursor = look.tool === 1 ? "none" : "crosshair"; syncUI(); flash(look.tool ? "cut tool" : "pan tool"); }
 });
 let drag = null;
-cv.addEventListener("pointerdown", e => { drag = {x:e.clientX, y:e.clientY, cx:cam.x, cy:cam.y}; cv.setPointerCapture(e.pointerId); });
+// screen -> cell coordinates, the inverse of the view shader
+function toCell(e){
+  const r = cv.getBoundingClientRect(), s = Math.min(r.width, r.height);
+  const nx = ((e.clientX - r.left) - (r.width - s)/2)/s*2 - 1, ny = 1 - ((e.clientY - r.top) - (r.height - s)/2)/s*2;
+  return [128 + (nx*cam.zoom + cam.x)*128, 128 + (ny*cam.zoom + cam.y)*128];
+}
+let cutting = false, lastCut = null;
+function cutAt(e){
+  const [x, y] = toCell(e);
+  if(lastCut){   // fill the gap between pointer events so a fast stroke is a continuous cut
+    const dx = x - lastCut[0], dy = y - lastCut[1], n = Math.min(64, Math.ceil(Math.hypot(dx, dy)/Math.max(1, look.brush*0.5)));
+    for(let i = 1; i <= n; i++) damage(lastCut[0] + dx*i/n, lastCut[1] + dy*i/n, look.brush);
+  } else damage(x, y, look.brush);
+  lastCut = [x, y];
+}
+cv.addEventListener("pointerdown", e => {
+  cv.setPointerCapture(e.pointerId);
+  if(look.tool === 1 && e.button === 0 && !e.shiftKey){ cutting = true; lastCut = null; cutAt(e); return; }
+  drag = {x:e.clientX, y:e.clientY, cx:cam.x, cy:cam.y};
+});
 cv.addEventListener("pointermove", e => {
+  const [bx, by] = toCell(e); brush.x = bx; brush.y = by; brush.on = true;
+  if(cutting){ cutAt(e); return; }
   if(!drag) return; const r = cv.getBoundingClientRect(), s = Math.min(r.width, r.height);
   cam.x = drag.cx - (e.clientX - drag.x)/s*2*cam.zoom; cam.y = drag.cy + (e.clientY - drag.y)/s*2*cam.zoom;
 });
-cv.addEventListener("pointerup", () => { drag = null; });
-cv.addEventListener("dblclick", () => { cam.x = 0; cam.y = 0; cam.zoom = 0.625; });
+cv.addEventListener("pointerup", () => { drag = null; if(cutting){ cutting = false; lastCut = null; flash("cut"); } });
+cv.addEventListener("pointerleave", () => { brush.on = false; });
+cv.addEventListener("dblclick", () => { if(look.tool === 1) return; cam.x = 0; cam.y = 0; cam.zoom = 0.625; });
 cv.addEventListener("wheel", e => {
   e.preventDefault(); const r = cv.getBoundingClientRect(), s = Math.min(r.width, r.height);
   const nx = ((e.clientX - r.left) - (r.width - s)/2)/s*2 - 1, ny = 1 - ((e.clientY - r.top) - (r.height - s)/2)/s*2;
@@ -774,6 +848,7 @@ window.__g = {
   read: () => { const f = fields(); return {step, m: b64f(f.m), rgb: b64f(f.rgb)}; },
   readQ: k => b64f(readTex(Q[k])),
   loss: () => { measure(); return [lossM, lossC, totalMass]; },
+  damage: (x, y, r) => damage(x, y, r),
   snap: () => { present(); return cv.toDataURL("image/png"); },
 };
 if(!new URLSearchParams(location.search).has("manual")) requestAnimationFrame(loop);
