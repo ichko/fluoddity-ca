@@ -81,8 +81,8 @@ body.hidep #toggle{display:block}
     <div class="grp">
       <h2>Damage</h2>
       <div id="g-dmg"></div>
-      <div class="btns"><button id="b-cut-rand" type="button" title="cut a random hole in the body">random hole</button></div>
-      <div class="note">Pick <b>cut</b> (or press <b>D</b>) and drag over the gecko to wipe cells: their mass, velocity, hidden and colour channels, and the trail under them. The mass is gone for good, as with a real cut. Shift-drag still pans.</div>
+      <div class="btns"><button id="b-cut-rand" type="button" title="cut a random hole in the body">random hole</button><button id="b-shake" type="button" title="give every cell a random velocity kick (mass kept)">shake everything</button></div>
+      <div class="note"><b>push</b> moves the mass under the brush along with your drag, like a finger through paint; <b>shake everything</b> kicks every cell's velocity in a random direction. Both keep every gram, so the gecko could always get back. <b>cut</b> (or <b>D</b>) wipes cells, mass and all: the mass is gone for good. Shift-drag pans with any tool.</div>
     </div>
     <div class="grp">
       <h2>Physics</h2>
@@ -369,6 +369,39 @@ void main(){
   o0 = z ? vec4(0) : texelFetch(uS0, p, 0); o1 = z ? vec4(0) : texelFetch(uS1, p, 0);
   o2 = z ? vec4(0) : texelFetch(uS2, p, 0); o3 = z ? vec4(0) : texelFetch(uS3, p, 0);
 }`;
+// ---- disturbance that keeps every gram: a velocity kick. Mode 0 pushes the cells under the
+// brush along the drag (soft edge); mode 1 gives every cell a random kick. Momentum changes,
+// mass does not, and the next move carries the mass off.
+const FS_PUSH = HEAD + ERASE + `
+uniform sampler2D uS0, uS1, uS2, uS3; uniform int uMode; uniform vec2 uDv; uniform float uSeed;
+layout(location=0) out vec4 o0; layout(location=1) out vec4 o1; layout(location=2) out vec4 o2; layout(location=3) out vec4 o3;
+float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233)) + uSeed)*43758.5453); }
+void main(){
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  o0 = texelFetch(uS0, p, 0); o1 = texelFetch(uS1, p, 0); o2 = texelFetch(uS2, p, 0); o3 = texelFetch(uS3, p, 0);
+  vec2 dv;
+  if(uMode == 0){
+    vec2 d = abs(gl_FragCoord.xy - uCut.xy); d = min(d, 256.0 - d);
+    float w = clamp(1.0 - sqrt(dot(d, d))/uCut.z, 0.0, 1.0); dv = uDv*w*w*(3.0 - 2.0*w);
+  } else {
+    float a = 6.2831853*h(gl_FragCoord.xy), r = sqrt(h(gl_FragCoord.yx + 7.1));
+    dv = uDv.x*r*vec2(cos(a), sin(a));
+  }
+  o0.yz += o0.x*dv/128.0;     // dv in cells per step; velocity is in world units (128 cells each)
+}`;
+// ---- moving mass by hand: copy the state into the move's input and give the cells under the
+// brush a displacement along the drag, then run the ordinary reintegration move. Every gram is kept.
+const FS_DISP = HEAD + ERASE + `
+uniform sampler2D uS0, uS1, uS2, uS3; uniform vec2 uDv;
+layout(location=0) out vec4 o0; layout(location=1) out vec4 o1; layout(location=2) out vec4 o2; layout(location=3) out vec4 o3;
+layout(location=4) out vec4 o4;
+void main(){
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  o0 = texelFetch(uS0, p, 0); o1 = texelFetch(uS1, p, 0); o2 = texelFetch(uS2, p, 0); o3 = texelFetch(uS3, p, 0);
+  vec2 d = abs(gl_FragCoord.xy - uCut.xy); d = min(d, 256.0 - d);
+  float w = clamp(1.0 - sqrt(dot(d, d))/uCut.z, 0.0, 1.0);
+  o4 = vec4(uDv*w*w*(3.0 - 2.0*w), 0.0, 0.0);
+}`;
 const FS_ERASE_T = HEAD + ERASE + `
 uniform sampler2D uT; out vec4 o;
 void main(){ o = inside() ? vec4(0) : texelFetch(uT, ivec2(gl_FragCoord.xy), 0); }`;
@@ -468,7 +501,7 @@ function compile(vs, fs){
 }
 const P = {
   brain: compile(VS_QUAD, FS_BRAIN), move: compile(VS_MOVE, FS_MOVE), trail: compile(VS_QUAD, FS_TRAIL),
-  view: compile(VS_QUAD, FS_VIEW), erase: compile(VS_QUAD, FS_ERASE), eraseT: compile(VS_QUAD, FS_ERASE_T), tone: compile(VS_QUAD, FS_TONE), down: compile(VS_QUAD, FS_DOWN), up: compile(VS_QUAD, FS_UP),
+  view: compile(VS_QUAD, FS_VIEW), erase: compile(VS_QUAD, FS_ERASE), push: compile(VS_QUAD, FS_PUSH), disp: compile(VS_QUAD, FS_DISP), eraseT: compile(VS_QUAD, FS_ERASE_T), tone: compile(VS_QUAD, FS_TONE), down: compile(VS_QUAD, FS_DOWN), up: compile(VS_QUAD, FS_UP),
   comp: compile(VS_QUAD, FS_COMPOSITE), blit: compile(VS_BLIT, FS_BLIT),
 };
 const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
@@ -575,6 +608,29 @@ function damage(x, y, r){
   cuts++;
 }
 let cuts = 0;
+function displace(x, y, r, dx, dy){
+  gl.disable(gl.BLEND);
+  let pr = P.disp; gl.useProgram(pr.p);
+  for(let k = 0; k < 4; k++) bindTex(k, st[cur][k], pr, "uS" + k);
+  gl.uniform3f(pr.u.uCut, x, y, r); gl.uniform2f(pr.u.uDv, dx, dy);
+  target(QF); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  const nx = 1 - cur;
+  target(stF[nx]); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+  pr = P.move; gl.useProgram(pr.p);
+  for(let k = 0; k < 4; k++) bindTex(k, Q[k], pr, "uQ" + k);
+  bindTex(4, Q[4], pr, "uD"); gl.uniform1f(pr.u.uBox, 1.0); gl.uniform1i(pr.u.uK, 2);
+  gl.enable(gl.BLEND); gl.blendEquation(gl.FUNC_ADD); gl.blendFunc(gl.ONE, gl.ONE);
+  gl.drawArrays(gl.POINTS, 0, 4*N*N);
+  gl.disable(gl.BLEND);
+  cur = nx;
+}
+function push(mode, x, y, r, dvx, dvy){
+  gl.disable(gl.BLEND);
+  const pr = P.push; gl.useProgram(pr.p);
+  for(let k = 0; k < 4; k++) bindTex(k, st[cur][k], pr, "uS" + k);
+  gl.uniform3f(pr.u.uCut, x, y, r); gl.uniform1i(pr.u.uMode, mode); gl.uniform2f(pr.u.uDv, dvx, dvy); gl.uniform1f(pr.u.uSeed, Math.random()*100);
+  const nx = 1 - cur; target(stF[nx]); gl.drawArrays(gl.TRIANGLES, 0, 3); cur = nx;
+}
 function physicsStep(){
   const D_ = derived();
   const box = Math.max(1, Math.min(3, PH.spread)), nt = Math.min(4, Math.floor(box) + 1 + (box % 1 > 0 ? 1 : 0));
@@ -643,7 +699,7 @@ function measure(){
 }
 
 // ---------------------------------------------------------------- display
-const look = { tool: 0, brush: 12, cut_trail: true, speed: 30, restart_at: 0, mode: 0, brightness: 1.0, glow: false, smooth: false, show_target: false, loss: true };
+const look = { tool: 0, brush: 12, cut_trail: true, push_k: 0.3, shake: 1.0, speed: 30, restart_at: 0, mode: 0, brightness: 1.0, glow: false, smooth: false, show_target: false, loss: true };
 const cam = { x: 0, y: 0, zoom: 0.625 };
 const brush = { x: 0, y: 0, on: false };   // zoom 0.625: the central 160 cells, as in the training pictures
 function present(){
@@ -651,7 +707,7 @@ function present(){
   bindTex(0, st[cur][0], pr, "uS0"); bindTex(1, st[cur][2], pr, "uS2"); bindTex(2, TGT.tex, pr, "uTgt");
   gl.uniform1i(pr.u.uMode, look.mode); gl.uniform1i(pr.u.uSmooth, look.smooth ? 1 : 0); gl.uniform1i(pr.u.uShowTgt, look.show_target ? 1 : 0);
   gl.uniform1f(pr.u.uZoom, cam.zoom); gl.uniform2f(pr.u.uCam, cam.x, cam.y);
-  gl.uniform3f(pr.u.uBrush, brush.x, brush.y, look.tool === 1 && brush.on ? look.brush : 0);
+  gl.uniform3f(pr.u.uBrush, brush.x, brush.y, look.tool > 0 && brush.on ? look.brush : 0);
   gl.uniform1f(pr.u.uCMax, TGT.cmax); gl.uniform1f(pr.u.uMMax, TGT.mmax*1.2); gl.uniform1f(pr.u.uBright, look.brightness);
   target(D.linF); gl.drawArrays(gl.TRIANGLES, 0, 3);
   const soft = 2.5;
@@ -733,9 +789,12 @@ rowCheck(gV, "smooth", "smooth cells", look);
 rowCheck(gV, "show_target", "show the target (T)", look);
 ctl.restart_at.r.title = "restart from the seed at this step (0 = never)";
 const gD = $("g-dmg"); gD.style.display = "flex"; gD.style.flexDirection = "column"; gD.style.gap = "6px";
-rowSelect(gD, "tool", "mouse", ["pan / zoom", "cut"], look, () => { cv.style.cursor = look.tool === 1 ? "none" : "crosshair"; });
+rowSelect(gD, "tool", "mouse", ["pan / zoom", "cut (removes mass)", "push (keeps mass)"], look, () => { cv.style.cursor = look.tool > 0 ? "none" : "crosshair"; });
 rowSlider(gD, "brush", "brush (cells)", 1, 48, 1, look);
 rowCheck(gD, "cut_trail", "also wipe the trail under the cut", look);
+rowSlider(gD, "shake", "shake (cells/step)", 0.1, 5, 0.1, look);
+
+$("b-shake").onclick = () => { push(1, 0, 0, 0, look.shake, 0); flash("shaken"); };
 $("b-cut-rand").onclick = () => {   // a disc on a random cell that holds mass
   const m = fields().m; let tot = 0; for(const v of m) tot += Math.max(0, v);
   let r = Math.random()*tot, i = 0; for(; i < m.length; i++){ r -= Math.max(0, m[i]); if(r <= 0) break; }
@@ -777,7 +836,7 @@ window.addEventListener("keydown", e => {
   if(k === "r") act.reset(); else if(k === " "){ e.preventDefault(); act.pause(); } else if(k === ".") act.one();
   else if(k === "t"){ look.show_target = !look.show_target; syncUI(); }
   else if(k === "h") document.body.classList.toggle("hidep");
-  else if(k === "d"){ look.tool = 1 - look.tool; cv.style.cursor = look.tool === 1 ? "none" : "crosshair"; syncUI(); flash(look.tool ? "cut tool" : "pan tool"); }
+  else if(k === "d"){ look.tool = (look.tool + 1) % 3; cv.style.cursor = look.tool > 0 ? "none" : "crosshair"; syncUI(); flash(["pan", "cut", "push"][look.tool] + " tool"); }
 });
 let drag = null;
 // screen -> cell coordinates, the inverse of the view shader
@@ -786,7 +845,7 @@ function toCell(e){
   const nx = ((e.clientX - r.left) - (r.width - s)/2)/s*2 - 1, ny = 1 - ((e.clientY - r.top) - (r.height - s)/2)/s*2;
   return [128 + (nx*cam.zoom + cam.x)*128, 128 + (ny*cam.zoom + cam.y)*128];
 }
-let cutting = false, lastCut = null;
+let cutting = false, lastCut = null, pushing = null;
 function cutAt(e){
   const [x, y] = toCell(e);
   if(lastCut){   // fill the gap between pointer events so a fast stroke is a continuous cut
@@ -798,15 +857,22 @@ function cutAt(e){
 cv.addEventListener("pointerdown", e => {
   cv.setPointerCapture(e.pointerId);
   if(look.tool === 1 && e.button === 0 && !e.shiftKey){ cutting = true; lastCut = null; cutAt(e); return; }
+  if(look.tool === 2 && e.button === 0 && !e.shiftKey){ pushing = toCell(e); return; }
   drag = {x:e.clientX, y:e.clientY, cx:cam.x, cy:cam.y};
 });
 cv.addEventListener("pointermove", e => {
   const [bx, by] = toCell(e); brush.x = bx; brush.y = by; brush.on = true;
   if(cutting){ cutAt(e); return; }
+  if(pushing){   // kick the cells under the brush along the drag: strength x the drag in cells
+    const [x, y] = toCell(e), dx = x - pushing[0], dy = y - pushing[1];
+    const L = Math.hypot(dx, dy);
+    if(L > 0.25){ const n = Math.ceil(L); for(let i = 0; i < n; i++) displace(pushing[0] + dx*(i + 0.5)/n, pushing[1] + dy*(i + 0.5)/n, look.brush, dx/n, dy/n); pushing = [x, y]; }
+    return;
+  }
   if(!drag) return; const r = cv.getBoundingClientRect(), s = Math.min(r.width, r.height);
   cam.x = drag.cx - (e.clientX - drag.x)/s*2*cam.zoom; cam.y = drag.cy + (e.clientY - drag.y)/s*2*cam.zoom;
 });
-cv.addEventListener("pointerup", () => { drag = null; if(cutting){ cutting = false; lastCut = null; flash("cut"); } });
+cv.addEventListener("pointerup", () => { drag = null; if(pushing){ pushing = null; flash("pushed"); } if(cutting){ cutting = false; lastCut = null; flash("cut"); } });
 cv.addEventListener("pointerleave", () => { brush.on = false; });
 cv.addEventListener("dblclick", () => { if(look.tool === 1) return; cam.x = 0; cam.y = 0; cam.zoom = 0.625; });
 cv.addEventListener("wheel", e => {
@@ -848,7 +914,7 @@ window.__g = {
   read: () => { const f = fields(); return {step, m: b64f(f.m), rgb: b64f(f.rgb)}; },
   readQ: k => b64f(readTex(Q[k])),
   loss: () => { measure(); return [lossM, lossC, totalMass]; },
-  damage: (x, y, r) => damage(x, y, r),
+  damage: (x, y, r) => damage(x, y, r), displace: (x, y, r, a, b) => displace(x, y, r, a, b), push: (m, x, y, r, a, b) => push(m, x, y, r, a, b),
   snap: () => { present(); return cv.toDataURL("image/png"); },
 };
 if(!new URLSearchParams(location.search).has("manual")) requestAnimationFrame(loop);
