@@ -548,7 +548,7 @@ const PHYS = [
 const S = {};          // current settings
 let baseRule = new Float32Array(80);
 const history = [];
-const look = { speed:5, motion_blur:true, blur_quality:2, world_size:0.4, brightness:3.0, tonemap_softness:2.5,
+const look = { speed:300, motion_blur:true, blur_quality:2, world_size:0.4, brightness:3.0, tonemap_softness:2.5,
                bloom:true, bloom_threshold:0.11, bloom_intensity:0.23, bloom_radius:1.0, brain:0, smooth:false, spread:2, pressure:0, rest:1, species:1 };
 let frame = 0, paused = false, rulesDirty = true;
 const cam = { x:0, y:0, zoom:1 };
@@ -746,9 +746,13 @@ function present(){
   bindTex(0, D.comp, pr, "uSrc"); gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
+let stepAcc = 0, lastStepT = performance.now();
 function frameTick(){
   target(D.accF); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
-  const steps = paused ? 0 : look.speed;
+  // steps per SECOND from the real frame time, so the speed does not depend on the screen's refresh rate
+  const tNow = performance.now(), dt = Math.min(0.1, (tNow - lastStepT)/1000); lastStepT = tNow;
+  stepAcc = paused ? 0 : stepAcc + Math.max(0.5, look.speed)*dt;
+  const steps = Math.min(60, Math.floor(stepAcc)); stepAcc -= Math.floor(stepAcc);
   if(steps === 0){ renderSample(1); }
   else if(look.motion_blur){
     const q = look.blur_quality, n = Math.ceil(steps/q);
@@ -810,7 +814,7 @@ rowCheck(gS, "disable_symmetry", "disable left/right symmetry", S);
 rowSlider(gL, "hue_sensitivity", "hue sens.", -2, 2, 0.001, S);
 rowCheck(gL, "color_by_cohort", "colour by species", S);
 rowCheck(gL, "watercolor_mode", "watercolour", S);
-rowSlider(gL, "speed", "steps/frame", 1, 30, 1, look);
+rowSlider(gL, "speed", "steps/second", 1, 1200, 1, look);
 rowSlider(gL, "brightness", "brightness", 0.2, 10, 0.01, look);
 rowCheck(gL, "bloom", "bloom", look);
 rowCheck(gL, "motion_blur", "motion blur", look);
@@ -843,6 +847,7 @@ function writeStore(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); ret
 let saved = readStore(KEY_SAVED, []);
 function snapshot(){
   const lk = {}; for(const k of LOOK_KEYS) lk[k] = look[k];
+  lk.speedUnit = "sps";
   return { S: {...S}, rule: Array.from(baseRule), look: lk, cam: {...cam}, source };
 }
 function applyConfig(c){
@@ -851,6 +856,7 @@ function applyConfig(c){
   history.length = 0; history.push({rule: baseRule.slice(), seed: S.rule_seed});
   const ws0 = look.world_size_i;
   for(const k of LOOK_KEYS) if(c.look && c.look[k] !== undefined) look[k] = c.look[k];
+  if(c.look && c.look.speedUnit !== "sps" && look.speed <= 30) look.speed *= 60;   // saved before speed became steps per second
   if(look.world_size_i !== ws0) buildWorld([0.1,0.2,0.4,0.7,1.0][look.world_size_i]);
   if(c.cam) Object.assign(cam, c.cam);
   if(c.source) source = c.source;

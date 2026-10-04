@@ -603,7 +603,7 @@ function measure(){
 }
 
 // ---------------------------------------------------------------- display
-const look = { speed: 2, restart_at: 0, mode: 0, brightness: 1.0, glow: false, smooth: false, show_target: false, loss: true };
+const look = { speed: 30, restart_at: 0, mode: 0, brightness: 1.0, glow: false, smooth: false, show_target: false, loss: true };
 const cam = { x: 0, y: 0, zoom: 0.625 };   // zoom 0.625: the central 160 cells, as in the training pictures
 function present(){
   let pr = P.view; gl.useProgram(pr.p); gl.disable(gl.BLEND);
@@ -680,8 +680,8 @@ function syncUI(){
 const gR = $("g-run"), gV = $("g-view");
 gR.style.display = "flex"; gR.style.flexDirection = "column"; gR.style.gap = "6px";
 gV.style.display = "flex"; gV.style.flexDirection = "column"; gV.style.gap = "6px";
-rowSlider(gR, "speed", "steps/frame", 0.05, 20, 0.05, look);
-ctl.speed.r.title = "below 1 the gecko takes a step only every few frames: 0.1 is one step every 10 frames";
+rowSlider(gR, "speed", "steps/second", 0.5, 300, 0.5, look);
+ctl.speed.r.title = "steps per second, the same on any screen: 2 is one step every half second";
 rowSlider(gR, "restart_at", "restart at", 0, 2000, 50, look);
 rowCheck(gR, "loss", "measure the loss every 8 steps", look);
 rowSelect(gV, "mode", "show", ["mass × colour", "mass"], look);
@@ -747,10 +747,12 @@ new ResizeObserver(() => { clearTimeout(resizeT); resizeT = setTimeout(buildDisp
 
 // ---------------------------------------------------------------- go
 buildDisplay(); restart();
-let win = {t: performance.now(), f: 0, s: 0}, fps = 0, sps = 0, stepAcc = 0;
+let win = {t: performance.now(), f: 0, s: 0}, fps = 0, sps = 0, stepAcc = 0, lastT = performance.now();
 function loop(){
-  stepAcc = paused ? 0 : stepAcc + Math.max(0.01, look.speed);
-  const n = Math.floor(stepAcc); stepAcc -= n;
+  // steps per SECOND, from the real frame time, so the speed is the same at 60 Hz and at 144 Hz
+  const tNow = performance.now(), dt = Math.min(0.1, (tNow - lastT)/1000); lastT = tNow;
+  stepAcc = paused ? 0 : stepAcc + Math.max(0.1, look.speed)*dt;
+  const n = Math.min(64, Math.floor(stepAcc)); stepAcc -= Math.floor(stepAcc);
   for(let i = 0; i < n; i++){
     physicsStep();
     if(look.restart_at > 0 && step >= look.restart_at) restart();
