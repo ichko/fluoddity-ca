@@ -111,6 +111,14 @@ class FCA(nn.Module):
         nC, Hd = a.centres, self.Hd
         # brain inputs: L(2) R(2) [Lm Rm m] [h(H) Lh(H) Rh(H)]
         self.din = 4 + (3 if a.see_mass else 0) + 3 * Hd
+        self.nbr = getattr(a, "nbr", 0)   # --nbr R: the (2R+1)^2 box mean of mass and of hidden around the cell, read isotropically
+        if self.nbr: self.din += 1 + Hd
+        self.anchor = getattr(a, "anchor", 0)   # --anchor K: the cell's position in the world as two more inputs, K more centres that hear only it
+        if self.anchor: self.din += 2
+        self.elastic = bool(getattr(a, "elastic", False))   # --elastic: every cell carries a rest position X; a spring pulls it back there
+        if self.elastic: self.din += 2
+        self.ex = 3 + Hd + (1 if a.colour else 0)            # index of m*X, m*Y in the state
+        if self.anchor: nC = nC + self.anchor   # --centres stays the count of the ordinary ones
         fr, am = bake_rule(preset["rule"], preset["rule_seed"], preset["mutation_scale"] * a.mut_mult)
         freq = torch.zeros(nC, self.din); amp = torch.zeros(nC, 4)
         g = torch.Generator().manual_seed(a.seed)
@@ -124,6 +132,13 @@ class FCA(nn.Module):
             # from ten centres then begins where it left off
         if self.din > 4:  # extra inputs start with small random frequencies so they are heard at all
             freq[:, 4:] = torch.randn(nC, self.din - 4, generator=g) * a.extra_freq
+        if self.anchor:   # the anchor centres: pure waves over the position, |k| log-uniform in [2, 60], silent at the start
+            K = self.anchor; c0 = nC - K
+            freq[:, -2:] = 0; freq[c0:] = 0
+            th = torch.rand(K, generator=g) * 2 * math.pi
+            km = torch.exp(math.log(2) + torch.rand(K, generator=g) * (math.log(60) - math.log(2)))
+            freq[c0:, -2] = km * th.cos(); freq[c0:, -1] = km * th.sin()
+            amp[c0:] = 0
         self.freq = nn.Parameter(freq)
         self.amp = nn.Parameter(amp)
         if Hd:
@@ -135,6 +150,16 @@ class FCA(nn.Module):
         if getattr(a, "brake", False):   # per-cell gate on the velocity, from the brain's features
             self.wb = nn.Parameter(torch.zeros(nC, 4))
             self.bb = nn.Parameter(torch.tensor(float(a.brake_init)))
+        if self.anchor:   # a force in the world's frame (cells/step^2), from the features: zero at the start
+            self.wa = nn.Parameter(torch.zeros(2, nC, 4))
+            with torch.no_grad():
+                if Hd: self.wh[:, nC - self.anchor:] = 0
+        if self.elastic:   # rest-position memory: X <- X + r (x - X), spring -k (x - X); r, k from the features
+            self.wr = nn.Parameter(torch.zeros(nC, 4)); self.br = nn.Parameter(torch.tensor(float(a.el_r0)))
+            self.wk = nn.Parameter(torch.zeros(nC, 4)); self.bk = nn.Parameter(torch.tensor(logit(a.el_k0 / a.el_kmax)))
+        if getattr(a, "pmod", False):   # per-cell gain on the pressure push, exp(wp.feats + bp), 1 at the start
+            self.wp = nn.Parameter(torch.zeros(nC, 4))
+            self.bp = nn.Parameter(torch.tensor(0.0))
         # --paint K: a colour layer riding on the mass, 3 RGB + K paint-hidden channels, carried
         # mass-weighted like the hidden ones and rewritten every step by its own small head. It reads
         # the brain's inputs, its own paint, the paint under the two eyes and the 3x3 mean paint, but
@@ -222,6 +247,7 @@ class FCA(nn.Module):
 
     def init_state(self, total_mass):
         n = self.N
+        self.t_now = 0
         m = self.disc * (total_mass / self.disc.sum())
         v = torch.zeros(2, n, n)
         v = F.pad(self.seed_vel(), (self.s0, n - self.s1, self.s0, n - self.s1))
@@ -231,6 +257,8 @@ class FCA(nn.Module):
             st += [m * h[k] for k in range(self.Hd)]
         if self.a.colour:
             st += [torch.zeros_like(m)]   # the page's col, mass-weighted; nothing has a colour yet
+        if self.elastic:
+            st += [m * self.xx.reshape(n, n), m * self.yy.reshape(n, n)]   # rest position: where it is, in cells
         if self.Pc:
             pp = torch.tanh(F.pad(self.pseed, (self.s0, n - self.s1, self.s0, n - self.s1)))
             st += [m * pp[k] for k in range(self.Pc)]
@@ -255,10 +283,12 @@ class FCA(nn.Module):
         return torch.stack([torch.sin(ph + off), torch.cos(ph + off * 0.7),
                             torch.sin(ph * 2 + off * 1.3), torch.cos(ph * 2 + off * 0.5)], 1)
 
-    def step(self, S, T):
+    def step(self, S, T, t=None):
         """S [3+H, n*n] = mass, momentum, mass*hidden; T [2, n*n] = trail. Only cells holding
         mass run the brain and move (the page's m <= 1e-12 early-out)."""
         a, P, n, Hd = self.a, self.P(), self.N, self.Hd
+        if t is None:   # called step by step: the model keeps the count (init_state sets it to 0)
+            t = getattr(self, "t_now", 0); self.t_now = t + 1
         m = S[0]
         ia = torch.nonzero(m > 1e-12).squeeze(1)
         ma = m[ia]
@@ -309,6 +339,22 @@ class FCA(nn.Module):
             h = Sa[3:3 + Hd] / ma
             Lh, Rh = EL[k:] * self.hgain, ER[k:] * self.hgain
             ins_b += [h, Lh, Rh]; ins_m += [h, Rh, Lh]
+        if self.nbr:   # isotropic: the same for the mirrored world
+            r_ = self.nbr; kk = 2 * r_ + 1
+            X = torch.cat([m[None], S[3:3 + Hd]]).reshape(1 + Hd, n, n)
+            B = F.avg_pool2d(F.pad(X[None], (r_,) * 4, mode="circular"), kk, 1)[0].reshape(1 + Hd, -1)[:, ia]
+            bmn = B[0:1]
+            nb = torch.cat([bmn * self.mgain, B[1:] / bmn.clamp_min(1e-6) * self.hgain])
+            ins_b += [nb]; ins_m += [nb]
+        if self.anchor:
+            pos = torch.stack([(xa + 0.5) / n * 2 - 1, (ya + 0.5) / n * 2 - 1])
+            ins_b += [pos]; ins_m += [pos]
+        if self.elastic:   # how far the cell is from its rest position, in its own frame, in units of 8 cells
+            Xr = Sa[self.ex:self.ex + 2] / ma
+            dd = torch.stack([xa, ya]) - Xr
+            dd = torch.remainder(dd + n / 2, n) - n / 2
+            dl = torch.stack([(dd * fwd).sum(0), (dd * left).sum(0)]) / 8.0
+            ins_b += [dl]; ins_m += [flip(dl)]
         fb = self.fourier_feats(torch.cat(ins_b))
         base = (self.amp[:, :, None] * fb).sum(0)
         if self.sym:
@@ -335,12 +381,25 @@ class FCA(nn.Module):
                     if free: sh = (sh - Pm) * torch.roll(occ, (-dy, -dx), (0, 1))
                     gx = gx + w * sh * dx; gy = gy + w * sh * dy
             g = torch.stack([gx.reshape(-1)[ia], gy.reshape(-1)[ia]])
+            feats = fb + fm if fm is not None else fb
+            if getattr(a, "pmod", False):
+                g = g * torch.exp((torch.einsum("cf,cfa->a", self.wp, feats) + self.bp).clamp(-4, 3))
             force = force - P["press"] * (2.0 / n) * g / 8.0
-        vel = vel * P["drag"] + force
         feats = fb + fm if fm is not None else fb
+        if self.elastic:
+            # every cell is as old as the seed it came from: its age is the step count t. Young cells do not
+            # remember where they were (r ~ 1); from about el_t0 on they do, unless the brain says otherwise
+            rr = torch.sigmoid(torch.einsum("cf,cfa->a", self.wr, feats) + self.br + (a.el_t0 - t) / a.el_tau)
+            kk = a.el_kmax * torch.sigmoid(torch.einsum("cf,cfa->a", self.wk, feats) + self.bk)
+            Xn = Xr + rr * dd                     # the rest position follows the cell at rate r
+            force = force - kk * (1 - rr) * dd / cells
+        if self.anchor:
+            force = force + torch.einsum("kcf,cfa->ka", self.wa, feats) / (cells * 4 * self.wa.shape[1])   # wa . feats / (4 nC): an average, in cells/step^2
+        vel = vel * P["drag"] + force
         if getattr(a, "brake", False):   # the brain may stop a cell: velocity and strafe both times a gate in (0,1)
             gate = torch.sigmoid(torch.einsum("cf,cfa->a", self.wb, feats) + self.bb)
             vel = vel * gate; strafe = strafe * gate
+            if getattr(self, "probe", None) is not None: self.probe.append((ia, gate.detach(), vel.detach()))
         disp = (vel + strafe * P["strafe"]) * cells
         Q = [ma, ma * vel[0], ma * vel[1]]
         if Hd:
@@ -349,12 +408,17 @@ class FCA(nn.Module):
             Q = Q + [ma * hn[i] for i in range(Hd)]
         if a.colour:   # FS_BRAIN: col = base.x + mir.x, carried with the mass through the move
             Q = Q + [ma * (base[0] + mir[0])]
+        if self.elastic:
+            Q = Q + [ma * Xn[0], ma * Xn[1]]
         if self.Pc:
             pinfo = self.paint_info(S, ma, ia, xa, ya, lo, ro, ins_b, ins_m); self._pinfo = pinfo
             Qp = self.paint_core(S[-self.Pc:], pinfo)
         else:
             Qp = None
         S2 = self.move(torch.stack(Q), xa + disp[0], ya + disp[1], P["spread"], S.shape[1], Qd=Qp)
+        if getattr(a, "feed", 0) > 0 and getattr(self, "feed_total", None):   # --feed r: lost mass comes back, every cell alike, at most r of it per step
+            fct = (self.feed_total / S2[0].sum().detach()).clamp(1.0, 1.0 + a.feed)
+            S2 = S2 * fct
         # trail: blur, fade, take the momentum
         p = P["persist"]; d = P["diff"] ** 2
         K = 4.0 / (torch.pow(5.0, d) - 1.0)
@@ -436,17 +500,21 @@ class FCA(nn.Module):
         rgb = 1.0 + 0.8 * ((p - 1.0).clamp(0, 1) - 1.0)
         return rgb * m[None] * self.cbright
 
-    def run(self, total_mass, steps, keep=(), ckpt=True, state=None, full=False):
-        """keep: steps whose mass (or, with full, whole state) is returned. state: (S, T) to start from."""
+    def run(self, total_mass, steps, keep=(), ckpt=True, state=None, full=False, t0=None):
+        """keep: steps whose mass (or, with full, whole state) is returned. state: (S, T) to start from,
+        at age t0 (default: where the last run or step left off; 0 from the seed)."""
         S, T = self.init_state(total_mass) if state is None else state
+        if state is None: t0 = 0
+        elif t0 is None: t0 = getattr(self, "t_now", 0)
         out = {}
         for t in range(1, steps + 1):
             if ckpt and torch.is_grad_enabled():
-                S, T = checkpoint(self.step, S, T, use_reentrant=False)
+                S, T = checkpoint(self.step, S, T, t0 + t - 1, use_reentrant=False)
                 if self.a.gdamp < 1: S, T = _Damp.apply(S, self.a.gdamp), _Damp.apply(T, self.a.gdamp)
             else:
-                S, T = self.step(S, T)
+                S, T = self.step(S, T, t0 + t - 1)
             if t in keep: out[t] = S if full else S[0].reshape(self.N, self.N)
+        self.t_now = t0 + steps
         return out, S, T
 
 
@@ -548,6 +616,12 @@ def save_params(model, path, extra):
                  seed_h=model.seed_h.detach().tolist())
     if model.a.see_mass: d["mgain"] = float(model.mgain)
     if getattr(model.a, "brake", False): d.update(brake_w=model.wb.detach().tolist(), brake_b=float(model.bb))
+    if getattr(model, "elastic", False): d.update(el_wr=model.wr.detach().tolist(), el_br=float(model.br), el_wk=model.wk.detach().tolist(),
+                                                  el_bk=float(model.bk), el_kmax=model.a.el_kmax)
+    if getattr(model, "anchor", 0): d.update(anchor_w=model.wa.detach().tolist(), anchor=model.anchor)
+    if getattr(model.a, "pmod", False): d.update(pmod_w=model.wp.detach().tolist(), pmod_b=float(model.bp))
+    if getattr(model.a, "nbr", 0): d["nbr"] = model.a.nbr
+    if getattr(model.a, "feed", 0): d["feed"] = model.a.feed
     if model.Pc: d.update(paint_w1=model.pw1.detach().tolist(), paint_b1=model.pb1.detach().tolist(),
                           paint_w2=model.pw2.detach().tolist(), paint_b2=model.pb2.detach().tolist(),
                           paint_seed=model.pseed.detach().tolist())
@@ -639,6 +713,22 @@ def main():
     ap.add_argument("--reinject", default="scale", choices=["scale", "edge", "seed", "none"], help="what happens to the cut mass (see damage_state)")
     ap.add_argument("--state_noise", type=float, default=0.0, help="pool: per-cell noise on grown samples' velocity (relative) and hidden (absolute)")
     ap.add_argument("--wdmg", type=float, default=0.0, help="selection: score = (undamaged + wdmg * damage_eval) / (1 + wdmg); >0 also runs the damage eval")
+    ap.add_argument("--disturb", type=int, default=0, help="pool: at most K grown samples of each batch get a random mass-conserving disturbance (uses --damage_age/gap/protect)")
+    ap.add_argument("--disturb_p", type=float, default=0.7, help="chance that an eligible sample is disturbed")
+    ap.add_argument("--nbr", type=int, default=0, help="R>0: brain also reads the (2R+1)^2 box mean of mass and hidden (isotropic)")
+    ap.add_argument("--elastic", action="store_true", help="every cell carries a rest position (2 channels) that follows it at a learned rate r; a learned spring k pulls it back")
+    ap.add_argument("--el_r0", type=float, default=2.0, help="initial bias of r (logit): 2 = rest position follows at 0.88 per step")
+    ap.add_argument("--el_k0", type=float, default=0.02, help="initial spring, cells/step^2 per cell")
+    ap.add_argument("--el_kmax", type=float, default=0.2, help="largest spring")
+    ap.add_argument("--el_t0", type=float, default=140, help="age (steps) around which cells start to remember their rest position")
+    ap.add_argument("--el_tau", type=float, default=8, help="how sharply (steps)")
+    ap.add_argument("--anchor", type=int, default=0, help="K>0: the brain hears the cell's position in the world (K more centres of pure position waves) and adds a force in the world's frame")
+    ap.add_argument("--lr_pmod", type=float, default=2e-3, help="Adam lr of the pressure gain and the anchor force")
+    ap.add_argument("--pmod", action="store_true", help="the brain scales the pressure push per cell: exp(wp.feats + bp)")
+    ap.add_argument("--feed", type=float, default=0.0, help="r>0: mass below the total comes back, every cell scaled alike, at most r per step")
+    ap.add_argument("--chop_p", type=float, default=0.0, help="damage: chance the cut is a straight amputation instead of a disc")
+    ap.add_argument("--eval_none", type=int, default=0, help="damage eval with the run's own --reinject even when it is none")
+    ap.add_argument("--dmg_after", default="50,100", help="damage eval: steps after the cut that are scored")
     ap.add_argument("--opt", default="grad", choices=["grad", "es"],
                     help="grad: backprop through the damped unroll; es: antithetic evolution strategy (no gradient)")
     ap.add_argument("--es_pop", type=int, default=12, help="antithetic pairs per ES generation")
@@ -715,8 +805,11 @@ def main():
                     sl = tuple(slice(0, min(x, y)) for x, y in zip(own[k].shape, v.shape))
                     own[k][sl] = v[sl]
         if not a.train_spread: own["raw.spread"] = torch.tensor(isp(a.spread - 1.0))   # an untrained spread is the one asked for
+        if "freq" in src and src["freq"].shape[1] < own["freq"].shape[1] and Hs == Hd:   # new inputs (--nbr) start unheard: exact warm start
+            own["freq"][:src["freq"].shape[0], src["freq"].shape[1]:] = 0
         model.load_state_dict(own)
         say(f"warm start from {a.init_from} ({ck['preset']}, best {ck.get('best')})")
+    model.feed_total = total
     if a.freeze_dyn:
         for nm, p in model.named_parameters():
             if nm not in ("pw1", "pb1", "pw2", "pb2", "pseed"): p.requires_grad_(False)
@@ -811,8 +904,8 @@ def frame_loss(model, S, tgt, trgb, a):
 def train(model, a, tgt, total, iters, say, name, quiet=False, ck=None):
     trgb = load_target_rgb(a) if has_col(a) else None
     seedp = [p for n, p in model.named_parameters() if n.startswith("seed_") and p.requires_grad]
-    brk = [p for n, p in model.named_parameters() if n in ("wb", "bb") and p.requires_grad]
-    rest = [p for n, p in model.named_parameters() if not n.startswith("seed_") and n not in ("wb", "bb") and p.requires_grad]
+    brk = [p for n, p in model.named_parameters() if n in ("wb", "bb", "wp", "bp") and p.requires_grad]
+    rest = [p for n, p in model.named_parameters() if not n.startswith("seed_") and n not in ("wb", "bb", "wp", "bp") and p.requires_grad]
     groups = [{"params": rest, "lr": a.lr}, {"params": seedp, "lr": a.lr_seed * a.seed_speed}]
     if brk: groups.append({"params": brk, "lr": a.lr_brake})
     opt = torch.optim.Adam(groups)
@@ -951,6 +1044,20 @@ def random_disc_cut(model, S, ra, rb, gen=None, max_frac=0.35):
     return cut, (cx, cy, r)
 
 
+def random_chop_cut(model, S, gen=None, fr_range=(0.08, 0.3)):
+    """an amputation: everything beyond a random straight line, the line placed so that a
+    fraction U(fr_range) of the mass is cut"""
+    m = S[0].clamp_min(0)
+    th = float(torch.rand(1, generator=gen)) * 2 * math.pi
+    proj = model.xf * math.cos(th) + model.yf * math.sin(th)
+    want = fr_range[0] + (fr_range[1] - fr_range[0]) * float(torch.rand(1, generator=gen))
+    o = torch.argsort(proj, descending=True)
+    cm = torch.cumsum(m[o], 0) / m.sum()
+    j = int(torch.searchsorted(cm, torch.tensor([want]))[0].clamp(max=len(o) - 1))
+    thr = float(proj[o[j]])
+    return (proj >= thr).float(), (th, want)
+
+
 def std_damages(model, a):
     """the standard cuts of the robustness benchmark, fixed in target-picture coordinates
     (x right, y up, 0..127; the picture sits in the middle of the grid): fraction of the
@@ -966,6 +1073,188 @@ def std_damages(model, a):
     }
 
 
+
+# ---------------------------------------------------------------- mass-conserving disturbances
+# Every disturbance keeps the mass: it moves it, or changes its velocity, hidden or colour.
+# Velocities in the state are world units per step: CELLS per step / (n / 2).
+def displace(model, S, dx, dy):
+    """move every cell's contents by (dx, dy) cells ([n*n] fields; sub-cell by the model's own
+    box deposit of side 1), every channel alike: mass, momentum, hidden, paint. Conserves."""
+    n = model.N
+    return model.move(S, model.xf + dx, model.yf + dy, torch.tensor(1.0), S.shape[1])
+
+
+def brush_drag(model, S, x0, y0, r, dx, dy):
+    """the page's push tool: the cells under a soft disc brush (smoothstep falloff to radius r)
+    are displaced along the drag, in sub-steps of at most one cell with the brush moving along
+    the drag (gecko.html displace()). x0, y0 in the page's cell coordinates (cell i spans [i, i+1])."""
+    n = model.N; L = math.hypot(dx, dy)
+    k = max(1, math.ceil(L))
+    for i in range(k):
+        cx, cy = x0 + dx * (i + 0.5) / k, y0 + dy * (i + 0.5) / k
+        ddx = (model.xf + 0.5 - cx).abs(); ddy = (model.yf + 0.5 - cy).abs()
+        ddx = torch.minimum(ddx, n - ddx); ddy = torch.minimum(ddy, n - ddy)
+        w = (1 - torch.sqrt(ddx ** 2 + ddy ** 2) / r).clamp(0, 1); w = w * w * (3 - 2 * w)
+        S = model.move(S, model.xf + w * dx / k, model.yf + w * dy / k, torch.tensor(1.0), S.shape[1])
+    return S
+
+
+def shake(model, S, dv, gen):
+    """the page's 'shake everything': every cell a velocity kick, random direction, |kick| = dv * sqrt(U)"""
+    a = torch.rand(S.shape[1], generator=gen) * 2 * math.pi; r = torch.sqrt(torch.rand(S.shape[1], generator=gen))
+    S = S.clone(); S[1] += S[0] * dv * r * torch.cos(a) / (model.N / 2.0); S[2] += S[0] * dv * r * torch.sin(a) / (model.N / 2.0)
+    return S
+
+
+def far_body_point(model, S, gen, k=12):
+    """a cell on the body far from its centre of mass: the farthest of k drawn by mass"""
+    m = S[0].clamp_min(0); w = m / m.sum()
+    cx, cy = float((w * model.xf).sum()), float((w * model.yf).sum())
+    j = torch.multinomial(w, k, replacement=True, generator=gen)
+    d = (model.xf[j] - cx) ** 2 + (model.yf[j] - cy) ** 2
+    jj = int(j[int(d.argmax())])
+    return float(model.xf[jj]), float(model.yf[jj]), cx, cy
+
+
+def smooth_field(model, gen, k=4):
+    """a smooth random scalar field over the grid, ~N(0,1), from a k x k grid, bicubic, periodic"""
+    n = model.N
+    z = torch.randn(1, 1, k, k, generator=gen)
+    z = F.pad(z, (1, 1, 1, 1), mode="circular")
+    u = F.interpolate(z, size=(n * (k + 2) // k, n * (k + 2) // k), mode="bicubic", align_corners=False)
+    o = n // k
+    return u[0, 0, o:o + n, o:o + n].reshape(-1)
+
+
+def body_point(model, S, gen):
+    m = S[0].clamp_min(0)
+    j = int(torch.multinomial(m / m.sum(), 1, generator=gen))
+    return float(model.xf[j]), float(model.yf[j])
+
+
+DISTURB_KINDS = ("drag", "drag", "limbdrag", "limbdrag", "shake", "shake", "kick", "swirl", "shove", "partoff", "velnoise", "warp", "blur", "hscram")
+
+
+def disturb_state(model, S, T, kind, gen, u=None):
+    """one random disturbance of kind `kind` at strength u in [0,1] (random if None); returns (S, T, text)"""
+    n, cells, Hd = model.N, model.N / 2.0, model.Hd
+    R = lambda lo, hi: lo + (hi - lo) * float(torch.rand(1, generator=gen))
+    if u is None: u = R(0.2, 1.0)
+    S = S.clone(); m = S[0]
+    ang = R(0, 2 * math.pi); cs, sn = math.cos(ang), math.sin(ang)
+    if kind == "drag":       # the page's push brush: a soft disc dragged 4-30 cells
+        cx, cy = body_point(model, S, gen); r = R(8, 32); k = 4 + u * 26
+        return brush_drag(model, S, cx + 0.5, cy + 0.5, r, k * cs, k * sn), T, f"drag r{r:.0f} {k:.0f}c"
+    if kind == "limbdrag":   # the brush on an end of the body (tail, head, a foot), dragged away from the body
+        x, y, cx, cy = far_body_point(model, S, gen); r = R(8, 24); k = 8 + u * 22
+        th = math.atan2(y - cy, x - cx) + R(-1.0, 1.0)
+        return brush_drag(model, S, x + 0.5, y + 0.5, r, k * math.cos(th), k * math.sin(th)), T, f"limbdrag r{r:.0f} {k:.0f}c"
+    if kind == "shake":      # the page's shake everything
+        dv = 0.3 + u * 4.7
+        return shake(model, S, dv, gen), T, f"shake {dv:.1f}"
+    if kind == "kick":       # a velocity kick in a disc, then the move carries it
+        cx, cy = body_point(model, S, gen); r = R(8, 32); sp = u * 12.0
+        mk = disc_cut(model, cx, cy, r)
+        S[1] += m * mk * sp * cs / cells; S[2] += m * mk * sp * sn / cells
+        return S, T, f"kick r{r:.0f} {sp:.1f}c/s"
+    if kind == "swirl":
+        cx, cy = body_point(model, S, gen); r = R(10, 32); sp = u * 10.0 * (1 if R(0, 1) < 0.5 else -1)
+        mk = disc_cut(model, cx, cy, r)
+        S[1] += m * mk * (-(model.yf - cy) / r) * sp / cells; S[2] += m * mk * ((model.xf - cx) / r) * sp / cells
+        return S, T, f"swirl r{r:.0f} {sp:.1f}"
+    if kind == "shove":      # the contents of a disc shifted by k cells
+        cx, cy = body_point(model, S, gen); r = R(8, 28); k = 3 + u * 15
+        mk = disc_cut(model, cx, cy, r)
+        S = S * (1 - mk) + displace(model, S * mk, k * cs, k * sn)
+        return S, T, f"shove r{r:.0f} {k:.0f}c"
+    if kind == "partoff":    # an end of the body (beyond a random line) moved 10-30 cells away from it
+        mk, (th, fr) = random_chop_cut(model, S, gen, (0.06, 0.25)); k = 8 + u * 22
+        th = th + R(-0.8, 0.8)
+        S = S * (1 - mk) + displace(model, S * mk, k * math.cos(th), k * math.sin(th))
+        return S, T, f"partoff {fr:.0%} {k:.0f}c"
+    if kind == "velnoise":   # every cell a random velocity, white or smooth
+        sp = u * 4.0
+        if R(0, 1) < 0.5:
+            nz = torch.randn(2, S.shape[1], generator=gen)
+        else:
+            nz = torch.stack([smooth_field(model, gen, 8), smooth_field(model, gen, 8)])
+        S[1:3] += m * nz * sp / cells
+        return S, T, f"velnoise {sp:.1f}"
+    if kind == "warp":       # the whole field displaced by a smooth random field
+        A = u * 6.0
+        dx = smooth_field(model, gen, 4) * A; dy = smooth_field(model, gen, 4) * A
+        return displace(model, S, dx, dy), T, f"warp {A:.1f}c"
+    if kind == "blur":       # box blur of every channel, conserving
+        k = 1 + int(u * 3.99)
+        X = S.reshape(-1, n, n)
+        for _ in range(k): X = F.avg_pool2d(F.pad(X[None], (1, 1, 1, 1), mode="circular"), 3, 1)[0]
+        return X.reshape(S.shape[0], -1), T, f"blur x{k}"
+    if kind == "hscram":     # hidden values scrambled (and the colour layer too, when there is one)
+        sd = 0.2 + u * 0.8; mm = m.clamp_min(1e-12)
+        for lo_, hi_ in ((3, 3 + Hd), (S.shape[0] - model.Pc, S.shape[0])):
+            if hi_ <= lo_: continue
+            h = (S[lo_:hi_] / mm + sd * torch.randn(hi_ - lo_, S.shape[1], generator=gen)).clamp(-0.99, 0.99)
+            S[lo_:hi_] = h * m
+        return S, T, f"hscram {sd:.2f}"
+    raise ValueError(kind)
+
+
+def random_disturb(model, S, T, gen, kinds=DISTURB_KINDS, mix_p=0.25):
+    """one disturbance, or with chance mix_p two or three milder ones"""
+    if float(torch.rand(1, generator=gen)) < mix_p:
+        k = 2 + int(float(torch.rand(1, generator=gen)) < 0.5); txt = []
+        for _ in range(k):
+            kd = kinds[int(torch.randint(len(kinds), (1,), generator=gen))]
+            S, T, t = disturb_state(model, S, T, kd, gen, u=0.1 + 0.5 * float(torch.rand(1, generator=gen))); txt.append(t)
+        return S, T, "+".join(txt)
+    kd = kinds[int(torch.randint(len(kinds), (1,), generator=gen))]
+    return disturb_state(model, S, T, kd, gen)
+
+
+def std_disturbs(model, a, S, T):
+    """the standard disturbances of the benchmark, fixed (target-picture coordinates as std_damages)"""
+    n, cells = model.N, model.N / 2.0
+    z = getattr(a, "zoom", 1); o = (n - 128 * z) // 2
+    P = lambda X, Y: (o + X * z, o + Y * z)
+    g = torch.Generator().manual_seed(4321)
+    m = S[0]; d = std_damages(model, a); out = {}
+    cx, cy = P(72, 60)
+    mk = disc_cut(model, cx, cy, 20)
+    X = S.clone(); X[1] += m * mk * 4.0 / cells; out["kick"] = X
+    mk = disc_cut(model, cx, cy, 24); X = S.clone(); r = 24
+    X[1] += m * mk * (-(model.yf - cy) / r) * 6.0 / cells; X[2] += m * mk * ((model.xf - cx) / r) * 6.0 / cells; out["swirl"] = X
+    mk = disc_cut(model, cx, cy, 16); out["shove"] = S * (1 - mk) + displace(model, S * mk, 12.0, 0.0)
+    q = 20 / math.sqrt(2)
+    mk = d["tail"]; out["tail_off"] = S * (1 - mk) + displace(model, S * mk, q, -q)
+    mk = d["head"]; out["head_off"] = S * (1 - mk) + displace(model, S * mk, -q, q)
+    out["shake"] = shake(model, S, 2.0, g)
+    out["drag16"] = brush_drag(model, S, cx + 0.5, cy + 0.5, 16, 16.0, 0.0)
+    tx, ty = P(98, 16); out["tail_drag"] = brush_drag(model, S, tx, ty, 16, q, -q)
+    hx, hy = P(26, 106); out["head_drag"] = brush_drag(model, S, hx, hy, 18, -q, q)
+    out["warp"] = displace(model, S, smooth_field(model, g, 4) * 4.0, smooth_field(model, g, 4) * 4.0)
+    Xb = S.reshape(-1, n, n)
+    for _ in range(3): Xb = F.avg_pool2d(F.pad(Xb[None], (1, 1, 1, 1), mode="circular"), 3, 1)[0]
+    out["blur"] = Xb.reshape(S.shape[0], -1)
+    X = S.clone(); mm = m.clamp_min(1e-12); Hd = model.Hd
+    X[3:3 + Hd] = (X[3:3 + Hd] / mm + 0.7 * torch.randn(Hd, S.shape[1], generator=g)).clamp(-0.99, 0.99) * m; out["hscram"] = X
+    return {k: (v, T) for k, v in out.items()}
+
+
+def disturb_eval(model, a, tgt, total, t_dmg=200, after=(50, 100), grown=None, kinds=None):
+    """grow to t_dmg, apply each standard disturbance, run on; mass ms_loss at t_dmg + each of `after`"""
+    with torch.no_grad():
+        if grown is None:
+            _, S, T = model.run(total, t_dmg, ckpt=False)
+        else:
+            S, T = grown
+        r = {}
+        for nm, st in std_disturbs(model, a, S, T).items():
+            if kinds and nm not in kinds: continue
+            out, _, _ = model.run(total, max(after), keep=set(after), ckpt=False, state=st, t0=t_dmg)
+            r[nm] = {k: round(float(ms_loss(view(a, out[k]), view(a, tgt))), 4) for k in after}
+    return r
+
+
 def damage_eval(model, a, tgt, total, t_dmg=200, after=(50, 100), reinject="scale", grown=None):
     """grow to t_dmg, apply each standard cut, run on; mass ms_loss at t_dmg + each of `after`"""
     with torch.no_grad():
@@ -976,7 +1265,7 @@ def damage_eval(model, a, tgt, total, t_dmg=200, after=(50, 100), reinject="scal
         r = {}
         for nm, cut in std_damages(model, a).items():
             S2, T2 = damage_state(model, S, T, cut, total, reinject)
-            out, _, _ = model.run(total, max(after), keep=set(after), ckpt=False, state=(S2, T2))
+            out, _, _ = model.run(total, max(after), keep=set(after), ckpt=False, state=(S2, T2), t0=t_dmg)
             r[nm] = {k: round(float(ms_loss(view(a, out[k]), view(a, tgt))), 4) for k in after}
     return r
 
@@ -1009,9 +1298,12 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
     trgb = load_target_rgb(a) if has_col(a) else None
     seedp = [p for n, p in model.named_parameters() if n.startswith("seed_") and p.requires_grad]
     brk = [p for n, p in model.named_parameters() if n in ("wb", "bb") and p.requires_grad]
-    rest = [p for n, p in model.named_parameters() if not n.startswith("seed_") and n not in ("wb", "bb") and p.requires_grad]
+    PM = ("wp", "bp", "wa", "wr", "br", "wk", "bk")
+    pm = [p for n, p in model.named_parameters() if n in PM and p.requires_grad]
+    rest = [p for n, p in model.named_parameters() if not n.startswith("seed_") and n not in ("wb", "bb") + PM and p.requires_grad]
     groups = [{"params": rest, "lr": a.lr}, {"params": seedp, "lr": a.lr_seed * a.seed_speed}]
     if brk: groups.append({"params": brk, "lr": a.lr_brake})
+    if pm: groups.append({"params": pm, "lr": getattr(a, "lr_pmod", 2e-3)})
     opt = torch.optim.Adam(groups)
     base_lr = [g["lr"] for g in opt.param_groups]
     ckp = os.path.join(HERE, f"fca_gecko_{a.tag}.pt")
@@ -1024,7 +1316,12 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
     def evaluate():
         r = long_eval(model, a, tgt, total); su = eval_score(r)
         if wdmg <= 0: return r, su, None, su
-        rd = damage_eval(model, a, tgt, total, reinject=a.reinject if a.reinject != "none" else "scale"); sd = damage_score(rd)
+        if getattr(a, "disturb", 0):
+            rd = disturb_eval(model, a, tgt, total, after=tuple(int(x) for x in str(getattr(a, "dmg_after", "50,100")).split(",")))
+            sd = damage_score(rd)
+            return r, su, rd, (su + wdmg * sd) / (1 + wdmg)
+        rd = damage_eval(model, a, tgt, total, reinject=a.reinject if (a.reinject != "none" or getattr(a, "feed", 0) or getattr(a, "eval_none", 0)) else "scale",
+                         after=tuple(int(x) for x in str(getattr(a, "dmg_after", "50,100")).split(","))); sd = damage_score(rd)
         return r, su, rd, (su + wdmg * sd) / (1 + wdmg)
     best, best_state, it0, hist, lr_scale, best_it, evals = 1e9, None, 0, [], 1.0, 0, []
     if ck is not None:
@@ -1071,10 +1368,22 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
             for k in elig[:a.damage]:
                 if float(torch.rand(1, generator=dgen)) >= a.damage_p: continue
                 i = idx[k]
-                cut, (cx, cy, r) = random_disc_cut(model, pool[i][0], dmg_r[0], dmg_r[1], dgen)
+                if float(torch.rand(1, generator=dgen)) < getattr(a, "chop_p", 0.0):
+                    cut, _ = random_chop_cut(model, pool[i][0], dgen); r = -1
+                else:
+                    cut, (cx, cy, r) = random_disc_cut(model, pool[i][0], dmg_r[0], dmg_r[1], dgen)
                 fr = float((pool[i][0][0] * cut).sum()) / total
                 pool[i] = damage_state(model, pool[i][0], pool[i][1], cut, total, a.reinject)
-                cut_at[i] = ages[i]; cuts.append(f"cut r{r:.0f} {fr:.0%}")
+                cut_at[i] = ages[i]; cuts.append(f"{'chop' if r < 0 else f'cut r{r:.0f}'} {fr:.0%}")
+        if getattr(a, "disturb", 0):   # mass-conserving disturbances of grown samples (the best of the batch first)
+            elig = sorted([k for k, i in enumerate(idx) if pool[i] is not None and ages[i] >= a.damage_age
+                           and (cut_at[i] < 0 or ages[i] - cut_at[i] >= a.damage_gap)], key=lambda k: cur[k])
+            for k in elig[:a.disturb]:
+                if float(torch.rand(1, generator=dgen)) >= a.disturb_p: continue
+                i = idx[k]
+                with torch.no_grad():
+                    S_, T_, txt = random_disturb(model, pool[i][0], pool[i][1], dgen)
+                pool[i] = (S_, T_); cut_at[i] = ages[i]; cuts.append(txt)
         opt.zero_grad(); info = [] + cuts
         tot_loss, ok = 0.0, True
         for i in idx:
@@ -1094,7 +1403,7 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
                         S0[3:3 + model.Hd] = hh * S0[0]
                 L = int(torch.randint(a.seg_min, a.seg_max + 1, (1,)))
                 keep = {k for k in range(1, L + 1) if k % a.score_every == 0 or k == L}
-            out, S, T = model.run(total, L, keep=keep, full=True, state=st)
+            out, S, T = model.run(total, L, keep=keep, full=True, state=st, t0=age)
             parts = [frame_loss(model, St, tgt, trgb, a) for St in out.values()]
             loss = sum(p[0] for p in parts) / len(parts)
             if not torch.isfinite(loss): ok = False; break

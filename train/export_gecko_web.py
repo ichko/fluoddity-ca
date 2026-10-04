@@ -50,7 +50,9 @@ def main():
     A = ap.parse_args()
     torch.set_num_threads(1)
     m, a, ck = build(A.ckpt)
-    assert a.see_mass and m.Hd == 6 and m.Pc == 7 and a.brake, "the page is written for see_mass, hidden 6, paint 4, brake"
+    m.feed_total = float(f.load_target(a).sum())
+    EL = getattr(m, "elastic", False)
+    assert a.see_mass and m.Hd == 6 and m.Pc == (5 if EL else 7) and a.brake, "the page is written for see_mass, hidden 6, paint 4 (2 with --elastic), brake"
     assert getattr(a, "zoom", 1) == 1 and not a.colour and not a.rgb and a.press_mode == 0
     n = m.N
     tgt = f.load_target(a); total = float(tgt.sum())
@@ -68,8 +70,12 @@ def main():
                        pcoef=float(Pt["press"] * (2.0 / n)), K=float(4.0 / (torch.pow(5.0, dd) - 1.0)),
                        persist=float(Pt["persist"]), deposit=float(1.0 - pc), cells=n / 2.0)
     S0 = S0.reshape(-1, n, n).numpy()
+    # the page's channel order: m, m*v, m*h0..5, m*paint (RGB first), then m*X, m*Y with --elastic
+    order = list(range(9)) + (list(range(11, 16)) + [9, 10] if EL else list(range(9, 16)))
+    S0 = S0[order]
     s0, s1 = m.s0, m.s1
-    assert np.abs(S0).sum() == np.abs(S0[:, s0:s1, s0:s1]).sum(), "seed outside its patch"
+    out_ = np.abs(S0).copy(); out_[:, s0:s1, s0:s1] = 0
+    assert out_.max() == 0, "seed outside its patch"
     reps = getattr(a, "trail_reps", 0) or getattr(a, "zoom", 1) ** 2
     assert reps == 1
     from PIL import Image
@@ -87,6 +93,15 @@ def main():
         channels=["m", "m*vx", "m*vy"] + [f"m*h{k}" for k in range(6)] + [f"m*p{k}" for k in range(7)],
         render="rgb = (m + m*p[0:3]) / 2, shown / max(target rgb premultiplied)",
     )
+    # optional pieces of the newer models (each off = absent)
+    if getattr(m, "nbr", 0): d["nbr"] = int(m.nbr)
+    if getattr(m, "anchor", 0): d["anchor"] = int(m.anchor); d["wa"] = b64(m.wa.detach())
+    if getattr(a, "pmod", False): d["wp"] = b64(m.wp.detach()); d["bp"] = float(m.bp.detach())
+    if getattr(a, "feed", 0): d["feed"] = float(a.feed)
+    if EL:
+        d["el"] = dict(wr=b64(m.wr.detach()), br=float(m.br.detach()), wk=b64(m.wk.detach()), bk=float(m.bk.detach()), kmax=float(a.el_kmax),
+                       t0=float(a.el_t0), tau=float(a.el_tau))
+        d["channels"] = ["m", "m*vx", "m*vy"] + [f"m*h{k}" for k in range(6)] + [f"m*p{k}" for k in range(5)] + ["m*X", "m*Y"]
     if A.ref:
         steps = sorted(int(s) for s in A.ref.split(","))
         trgb = f.load_target_rgb(a)

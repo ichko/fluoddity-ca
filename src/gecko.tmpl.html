@@ -76,7 +76,8 @@ body.hidep #toggle{display:block}
         <button id="b-step" type="button" title=". (one step, paused)">step</button>
       </div>
       <div id="g-run"></div>
-      <div class="note">A disc of mass, 27 cells across, grows into the gecko. Every cell runs the same trained rule: Fluoddity's Fourier brain reads the trail, the mass and six hidden numbers through two eyes, accelerates, and pushes its mass to where it lands. A small paint head carries the colour along. Nothing tells a cell where it is.</div>
+      <div class="sel"><span>model</span><select id="model-sel" title="each model is its own page"></select></div>
+      <div class="note">A disc of mass, 27 cells across, grows into the gecko. Every cell runs the same trained rule: Fluoddity's Fourier brain reads the trail, the mass and six hidden numbers through two eyes, accelerates, and pushes its mass to where it lands. A small paint head carries the colour along. <span id="model-note">Nothing tells a cell where it is.</span></div>
     </div>
     <div class="grp">
       <h2>Damage</h2>
@@ -127,19 +128,23 @@ if(gl.getParameter(gl.MAX_DRAW_BUFFERS) < 5) fail("This page needs 5 draw buffer
 const dec = o => { const b = atob(o.b64), u = new Uint8Array(b.length); for(let i=0;i<b.length;i++) u[i] = b.charCodeAt(i);
   const f = new Float32Array(u.buffer); f.shape = o.shape; return f; };
 const N = G.N, NC = G.freq.shape[0], DIN = G.freq.shape[1], HD = G.wh.shape[0], PC = G.pw2.shape[0], HW = G.pw1.shape[0];
-if(N !== 256 || DIN !== 25 || HD !== 6 || PC !== 7 || G.pw1.shape[1] !== 54 || HW % 4) fail("unexpected model shape");
+const NBR = G.nbr || 0, ANCHOR = G.anchor || 0, PMOD = !!G.wp, EL = !!G.el;
+const DIN0 = 25 + (NBR ? 7 : 0), DINP = Math.ceil(DIN/4)*4, PIN = DIN + 4*PC + 1, PINP = Math.ceil(PIN/4)*4;
+if(N !== 256 || DIN !== DIN0 + (ANCHOR ? 2 : 0) + (EL ? 2 : 0) || HD !== 6 || PC !== (EL ? 5 : 7) || G.pw1.shape[1] !== PIN || HW % 4) fail("unexpected model shape");
 const D_ = G.derived;
 
 // ---------------------------------------------------------------- weights, packed as vec4 texels
 const W = (() => {
   const freq = dec(G.freq), amp = dec(G.amp), wh = dec(G.wh), bh = dec(G.bh), wb = dec(G.wb);
+  const wa = ANCHOR ? dec(G.wa) : new Float32Array(8*NC), wp = PMOD ? dec(G.wp) : new Float32Array(4*NC);
+  const wr = EL ? dec(G.el.wr) : new Float32Array(4*NC), wk = EL ? dec(G.el.wk) : new Float32Array(4*NC);
   const w1 = dec(G.pw1), b1 = dec(G.pb1), w2 = dec(G.pw2), b2 = dec(G.pb2);
   const parts = [], off = {}; let n = 0;
   const add = (name, vec4s) => { off[name] = n; parts.push(vec4s); n += vec4s.length/4; };
   const pad = (arr, len) => { const o = new Float32Array(len); o.set(arr); return o; };
-  { const o = new Float32Array(NC*28); for(let c=0;c<NC;c++) for(let i=0;i<25;i++) o[c*28+i] = freq[c*25+i]; add("FREQ", o); }
-  add("AMP", amp); add("WH", wh); add("WB", wb); add("BH", pad(bh, 8));
-  { const o = new Float32Array(HW*56); for(let j=0;j<HW;j++) for(let i=0;i<54;i++) o[j*56+i] = w1[j*54+i]; add("W1", o); }
+  { const o = new Float32Array(NC*DINP); for(let c=0;c<NC;c++) for(let i=0;i<DIN;i++) o[c*DINP+i] = freq[c*DIN+i]; add("FREQ", o); }
+  add("AMP", amp); add("WH", wh); add("WB", wb); add("BH", pad(bh, 8)); add("WA", wa); add("WP", wp); add("WR", wr); add("WK", wk);
+  { const o = new Float32Array(HW*PINP); for(let j=0;j<HW;j++) for(let i=0;i<PIN;i++) o[j*PINP+i] = w1[j*PIN+i]; add("W1", o); }
   add("B1", b1);
   { const o = new Float32Array(HW*8); for(let j=0;j<HW;j++) for(let k=0;k<PC;k++) o[j*8+k] = w2[k*HW+j]; add("W2T", o); }  // W2 transposed: 2 vec4 per hidden unit
   add("B2", pad(b2, 8));
@@ -158,13 +163,29 @@ void main(){ vec2 p = vec2((gl_VertexID<<1)&2, gl_VertexID&2); vUv = p; gl_Posit
 const DEFS = `
 #define NC ${NC}
 #define HW ${HW}
+#define DIN ${DIN}
+#define DINP ${DINP}
+#define DQ ${DINP/4}
+#define PINP ${PINP}
+#define PQ ${PINP/4}
+#define NBR ${NBR}
+#define ANCHOR ${ANCHOR ? 1 : 0}
+#define PMOD ${PMOD ? 1 : 0}
+#define BP ${PMOD ? G.bp.toFixed(9) : "0.0"}
+#define EL ${EL ? 1 : 0}
+#define PCN ${PC}
+#define EL_BR ${EL ? G.el.br.toFixed(9) : "0.0"}
+#define EL_BK ${EL ? G.el.bk.toFixed(9) : "0.0"}
+#define EL_KMAX ${EL ? G.el.kmax.toFixed(9) : "0.0"}
+#define EL_T0 ${EL ? G.el.t0.toFixed(6) : "0.0"}
+#define EL_TAU ${EL ? G.el.tau.toFixed(6) : "1.0"}
 ` + Object.entries(W.off).map(([k, v]) => `#define O_${k} ${v}`).join("\n") + "\n";
 
 // ---- 1. every cell: eyes, brain, hidden, brake, pressure, paint. One fragment per cell.
 const FS_BRAIN = HEAD + DEFS + `
 uniform sampler2D uS0, uS1, uS2, uS3, uT, uW;
 uniform float uCos, uSin, uSD, uScale, uFC, uSC, uAxial, uLateral, uDrag, uStrafeP, uMG, uHG, uBB, uPC, uRest, uOriMix, uCells;
-uniform int uAbsOri; uniform bool uSym, uPress;
+uniform int uAbsOri; uniform bool uSym, uPress; uniform float uStep;
 layout(location=0) out vec4 o0; layout(location=1) out vec4 o1; layout(location=2) out vec4 o2; layout(location=3) out vec4 o3;
 layout(location=4) out vec4 o4;   // displacement this step, in cells
 vec4 Wt(int k){ return texelFetch(uW, ivec2(k & 255, k >> 8), 0); }
@@ -196,24 +217,24 @@ vec2 sincos_(float x){
   return q == 0 ? vec2(s, c) : q == 1 ? vec2(c, -s) : q == 2 ? vec2(-s, -c) : vec2(-c, s);
 }
 vec4 FB[NC];
-// the page's four waves per centre: features of one input vector x (25 used of 28)
-void fourier(float x[28]){
-  vec4 v[7];
-  for(int q = 0; q < 7; q++) v[q] = vec4(x[4*q], x[4*q+1], x[4*q+2], x[4*q+3]);
+// the page's four waves per centre: features of one input vector x (DIN used of DINP)
+void fourier(float x[DINP]){
+  vec4 v[DQ];
+  for(int q = 0; q < DQ; q++) v[q] = vec4(x[4*q], x[4*q+1], x[4*q+2], x[4*q+3]);
   for(int i = 0; i < NC; i++){
     float ph = 0.0;
-    for(int q = 0; q < 7; q++) ph += dot(Wt(O_FREQ + i*7 + q), v[q]);
+    for(int q = 0; q < DQ; q++) ph += dot(Wt(O_FREQ + i*DQ + q), v[q]);
     float off = 2.0*float(i)*0.6283 + Wt(O_AMP + i).w*3.14159;
     FB[i] = vec4(sincos_(ph + off).x, sincos_(ph + off*0.7).y, sincos_(ph*2.0 + off*1.3).x, sincos_(ph*2.0 + off*0.5).y);
   }
 }
-// one pass of the paint head's first layer over a 56-vector, relu'd; accumulates layer 2
-void paintLayer(float x[56], inout vec4 d0, inout vec4 d1){
-  vec4 v[14];
-  for(int q = 0; q < 14; q++) v[q] = vec4(x[4*q], x[4*q+1], x[4*q+2], x[4*q+3]);
+// one pass of the paint head's first layer over a PINP-vector, relu'd; accumulates layer 2
+void paintLayer(float x[PINP], inout vec4 d0, inout vec4 d1){
+  vec4 v[PQ];
+  for(int q = 0; q < PQ; q++) v[q] = vec4(x[4*q], x[4*q+1], x[4*q+2], x[4*q+3]);
   for(int j = 0; j < HW; j++){
     float z = 0.0;
-    for(int q = 0; q < 14; q++) z += dot(Wt(O_W1 + j*14 + q), v[q]);
+    for(int q = 0; q < PQ; q++) z += dot(Wt(O_W1 + j*PQ + q), v[q]);
     vec4 b = Wt(O_B1 + j/4);
     z = max(z + b[j % 4], 0.0);
     d0 += z*Wt(O_W2T + 2*j); d1 += z*Wt(O_W2T + 2*j + 1);
@@ -228,6 +249,9 @@ void main(){
   float vn = sqrt(dot(vel, vel) + 1e-30);
   vec2 ori = vn > 1e-12 ? vel/vn : vec2(0);
   vec2 xy = vec2(ij);
+#if EL
+  vec2 Xr = s3.zw/m, dd = mod(xy - Xr + 128.0, 256.0) - 128.0;   // how far the cell is from its rest position, in cells
+#endif
   if(uAbsOri == 1) ori = ori + (vec2(0, 1) - ori)*uOriMix;
   else if(uAbsOri == 2){ vec2 pos = (xy + 0.5)/256.0*2.0 - 1.0; vec2 pn = pos/sqrt(dot(pos, pos) + 1e-12); ori = ori + (-pn - ori)*uOriMix; }
   float on = sqrt(dot(ori, ori) + 1e-30);
@@ -251,14 +275,34 @@ void main(){
   float mo = m*uMG;
   float h[6] = float[6](s0.w/m, s1.x/m, s1.y/m, s1.z/m, s1.w/m, s2.x/m);
   // brain inputs: L(2) R(2) Lm Rm m h(6) Lh(6) Rh(6), and the mirrored world's
-  float xb[28], xm[28];
+  float xb[DINP], xm[DINP];
   xb[0] = L.x; xb[1] = L.y; xb[2] = R.x; xb[3] = R.y; xb[4] = Lm; xb[5] = Rm; xb[6] = mo;
   xm[0] = R.x; xm[1] = -R.y; xm[2] = L.x; xm[3] = -L.y; xm[4] = Rm; xm[5] = Lm; xm[6] = mo;
   for(int k = 0; k < 6; k++){
     xb[7+k] = h[k]; xb[13+k] = Lh[k]; xb[19+k] = Rh[k];
     xm[7+k] = h[k]; xm[13+k] = Rh[k]; xm[19+k] = Lh[k];
   }
-  for(int k = 25; k < 28; k++){ xb[k] = 0.0; xm[k] = 0.0; }
+  int kin = 25;
+#if NBR > 0
+  {  // the (2R+1)^2 box mean of mass and of hidden around the cell, the same in the mirrored world
+    float bm_ = 0.0; float bh_[6] = float[6](0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    for(int dy = -NBR; dy <= NBR; dy++) for(int dx = -NBR; dx <= NBR; dx++){
+      ivec2 c = wrapc(ij + ivec2(dx, dy));
+      vec4 a0 = texelFetch(uS0, c, 0), a1 = texelFetch(uS1, c, 0); float a2 = texelFetch(uS2, c, 0).x;
+      bm_ += a0.x; bh_[0] += a0.w; bh_[1] += a1.x; bh_[2] += a1.y; bh_[3] += a1.z; bh_[4] += a1.w; bh_[5] += a2;
+    }
+    float nn = float((2*NBR + 1)*(2*NBR + 1)); bm_ /= nn;
+    xb[kin] = bm_*uMG; xm[kin] = xb[kin]; kin++;
+    for(int k = 0; k < 6; k++){ xb[kin] = bh_[k]/nn/max(bm_, 1e-6)*uHG; xm[kin] = xb[kin]; kin++; }
+  }
+#endif
+#if ANCHOR
+  { vec2 pos = (xy + 0.5)/256.0*2.0 - 1.0; xb[kin] = pos.x; xm[kin] = pos.x; kin++; xb[kin] = pos.y; xm[kin] = pos.y; kin++; }
+#endif
+#if EL
+  { vec2 dl = vec2(dot(dd, fwd), dot(dd, left))/8.0; xb[kin] = dl.x; xm[kin] = dl.x; kin++; xb[kin] = dl.y; xm[kin] = -dl.y; kin++; }
+#endif
+  for(int k = DIN; k < DINP; k++){ xb[k] = 0.0; xm[k] = 0.0; }
   vec4 base = vec4(0), mir = vec4(0), F[NC];
   fourier(xb);
   for(int i = 0; i < NC; i++){ F[i] = FB[i]; base += Wt(O_AMP + i)*FB[i]; }
@@ -282,7 +326,23 @@ void main(){
     float wgt = (dx == 0 || dy == 0) ? 2.0 : 1.0;
     g += wgt*P*vec2(dx, dy);
   }
+#if PMOD
+  { float z = BP; for(int i = 0; i < NC; i++) z += dot(Wt(O_WP + i), F[i]); g *= exp(clamp(z, -4.0, 3.0)); }
+#endif
   if(uPress) force = force - uPC*g/8.0;
+#if EL
+  // the rest position follows the cell at rate r; a spring k pulls the cell towards it
+  // every cell is as old as the seed it came from (the step count): young cells do not remember (r ~ 1)
+  float rz = EL_BR + (EL_T0 - uStep)/EL_TAU, kz = EL_BK;
+  for(int i = 0; i < NC; i++){ rz += dot(Wt(O_WR + i), F[i]); kz += dot(Wt(O_WK + i), F[i]); }
+  float rr = 1.0/(1.0 + exp(-rz)), kk = EL_KMAX/(1.0 + exp(-kz));
+  vec2 Xn = Xr + rr*dd;
+  force -= kk*(1.0 - rr)*dd/uCells;
+#endif
+#if ANCHOR
+  { vec2 fa = vec2(0); for(int i = 0; i < NC; i++){ fa.x += dot(Wt(O_WA + i), F[i]); fa.y += dot(Wt(O_WA + NC + i), F[i]); }
+    force += fa/(uCells*4.0*float(NC)); }
+#endif
   vel = vel*uDrag + force;
   float gz = uBB;
   for(int i = 0; i < NC; i++) gz += dot(Wt(O_WB + i), F[i]);
@@ -299,27 +359,31 @@ void main(){
   // paint: reads asinh of the brain's inputs, its own paint, the paint under each eye, the 3x3 mean paint and mass
   float bm = bmm/9.0, bmc = max(bm, 1e-6);
   float pv[7] = float[7](s2.y/m, s2.z/m, s2.w/m, s3.x/m, s3.y/m, s3.z/m, s3.w/m);
-  for(int k = 0; k < 7; k++) pv[k] = clamp(pv[k], -0.995, 0.995);
+  for(int k = 0; k < PCN; k++) pv[k] = clamp(pv[k], -0.995, 0.995);
   float nbp[7] = float[7](bp3.x/9.0/bmc, bp3.y/9.0/bmc, bp3.z/9.0/bmc, bm9.x/9.0/bmc, bm9.y/9.0/bmc, bm9.z/9.0/bmc, bm9.w/9.0/bmc);
-  float pin[56];
-  for(int k = 0; k < 25; k++) pin[k] = asinh_(xb[k]);
-  for(int k = 0; k < 7; k++){ pin[25+k] = pv[k]; pin[32+k] = PL[k]; pin[39+k] = PR[k]; pin[46+k] = nbp[k]; }
-  pin[53] = bm; pin[54] = 0.0; pin[55] = 0.0;
+  float pin[PINP];
+  for(int k = 0; k < DIN; k++) pin[k] = asinh_(xb[k]);
+  for(int k = 0; k < PCN; k++){ pin[DIN+k] = pv[k]; pin[DIN+PCN+k] = PL[k]; pin[DIN+2*PCN+k] = PR[k]; pin[DIN+3*PCN+k] = nbp[k]; }
+  pin[DIN+4*PCN] = bm; for(int k = DIN + 4*PCN + 1; k < PINP; k++) pin[k] = 0.0;
   vec4 d0 = vec4(0), d1 = vec4(0);
   paintLayer(pin, d0, d1);
   if(uSym){
-    for(int k = 0; k < 25; k++) pin[k] = asinh_(xm[k]);
-    for(int k = 0; k < 7; k++){ pin[32+k] = PR[k]; pin[39+k] = PL[k]; }
+    for(int k = 0; k < DIN; k++) pin[k] = asinh_(xm[k]);
+    for(int k = 0; k < PCN; k++){ pin[DIN+PCN+k] = PR[k]; pin[DIN+2*PCN+k] = PL[k]; }
     paintLayer(pin, d0, d1);
   }
   d0 += Wt(O_B2); d1 += Wt(O_B2 + 1);
   float dp[7] = float[7](d0.x, d0.y, d0.z, d0.w, d1.x, d1.y, d1.z);
   float pn[7];
-  for(int k = 0; k < 7; k++) pn[k] = tanh_(atanh(pv[k]) + dp[k]);
+  for(int k = 0; k < 7; k++) pn[k] = k < PCN ? tanh_(atanh(pv[k]) + dp[k]) : 0.0;
   o0 = vec4(m, m*vel.x, m*vel.y, m*hn[0]);
   o1 = vec4(m*hn[1], m*hn[2], m*hn[3], m*hn[4]);
   o2 = vec4(m*hn[5], m*pn[0], m*pn[1], m*pn[2]);
+#if EL
+  o3 = vec4(m*pn[3], m*pn[4], m*Xn.x, m*Xn.y);
+#else
   o3 = vec4(m*pn[3], m*pn[4], m*pn[5], m*pn[6]);
+#endif
   o4 = vec4(disp, 0.0, 0.0);
 }`;
 
@@ -650,7 +714,7 @@ function physicsStep(){
   gl.uniform1f(U.uFC, D_.fcoef); gl.uniform1f(U.uSC, D_.scoef); gl.uniform1f(U.uAxial, ph.axial); gl.uniform1f(U.uLateral, ph.lateral);
   gl.uniform1f(U.uDrag, ph.drag); gl.uniform1f(U.uStrafeP, ph.strafe); gl.uniform1f(U.uMG, PH.mgain); gl.uniform1f(U.uHG, PH.hgain);
   gl.uniform1f(U.uBB, PH.brake); gl.uniform1f(U.uPC, D_.pcoef); gl.uniform1f(U.uRest, PH.rest); gl.uniform1f(U.uOriMix, G.orimix);
-  gl.uniform1f(U.uCells, D_.cells); gl.uniform1i(U.uAbsOri, G.absori); gl.uniform1i(U.uSym, G.sym ? 1 : 0); gl.uniform1i(U.uPress, G.pressure_on ? 1 : 0);
+  gl.uniform1f(U.uCells, D_.cells); gl.uniform1i(U.uAbsOri, G.absori); gl.uniform1i(U.uSym, G.sym ? 1 : 0); gl.uniform1i(U.uPress, G.pressure_on ? 1 : 0); gl.uniform1f(U.uStep, step);
   target(QF); gl.drawArrays(gl.TRIANGLES, 0, 3);
   // 2. move
   const nx = 1 - cur;
@@ -921,6 +985,15 @@ function loop(){
   requestAnimationFrame(loop);
 }
 const b64f = a => { const u = new Uint8Array(a.buffer); let s = ""; for(let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+// ---------------------------------------------------------------- which model (all inlined by src/build.py; ?model=KEY picks one)
+{
+  const sel = $("model-sel"), list = (typeof GECKO_LABELS !== "undefined") ? GECKO_LABELS : [["", G.source]];
+  for(const [key, label] of list){ const o = document.createElement("option"); o.value = key; o.textContent = label; sel.appendChild(o); }
+  sel.value = (typeof GECKO_KEY !== "undefined") ? GECKO_KEY : list[0][0];
+  sel.onchange = () => { const u = new URL(location.href); u.searchParams.set("model", sel.value); location.href = u.toString(); };
+  if(G.el) $("model-note").textContent = "Each cell also remembers where it settled: from about step " + Math.round(G.el.t0) +
+    " on it keeps a rest position, carried with its mass, and a trained spring pulls it back there. So a push, a poke or a shake heals; a cut does not, the mass is gone.";
+}
 window.__g = {
   get t(){ return step; }, restart, look, cam,
   step: n => { for(let i = 0; i < n; i++) physicsStep(); gl.finish(); return step; },
