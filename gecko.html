@@ -77,29 +77,21 @@ body.hidep #toggle{display:block}
       </div>
       <div id="g-run"></div>
       <div class="sel"><span>model</span><select id="model-sel" title="each model is its own page"></select></div>
-      <div class="note">A disc of mass, 27 cells across, grows into the gecko. Every cell runs the same trained rule: Fluoddity's Fourier brain reads the trail, the mass and six hidden numbers through two eyes, accelerates, and pushes its mass to where it lands. A small paint head carries the colour along. <span id="model-note">Nothing tells a cell where it is.</span></div>
     </div>
     <div class="grp">
       <h2>Damage</h2>
       <div id="g-dmg"></div>
       <div class="btns"><button id="b-cut-rand" type="button" title="cut a random hole in the body">random hole</button><button id="b-shake" type="button" title="give every cell a random velocity kick (mass kept)">shake everything</button></div>
-      <div class="note"><b>push</b> moves the mass under the brush along with your drag, like a finger through paint; <b>poke</b> kicks the cells under the brush outward from where you press and <b>twirl</b> spins them; hold the button to keep at it. <b>shake everything</b> kicks every cell's velocity in a random direction. Both keep every gram, so the gecko could always get back. <b>cut</b> (or <b>D</b>) wipes cells, mass and all: the mass is gone for good. Shift-drag pans with any tool.</div>
     </div>
     <div class="grp">
       <h2>Physics</h2>
       <div id="g-phys"></div>
       <div class="btns"><button id="b-trained" type="button">reset to trained values</button></div>
-      <div class="note">These start at the values the gecko was trained with. Change them while it runs, or restart from the seed to see how it grows under them.</div>
     </div>
     <div class="grp">
       <h2>View</h2>
       <div id="g-view"></div>
-      <div id="inset"><canvas id="tgt" width="128" height="128" title="the target, gecko.png (T shows it full size)"></canvas>
-        <div class="note">The target, 128×128, one pixel per cell. <b>T</b> swaps the view to it. Wheel to zoom, drag to pan, double-click to recentre.</div></div>
-    </div>
-    <div class="grp">
-      <h2>About</h2>
-      <div class="note" id="about"></div>
+      <div id="inset"><canvas id="tgt" width="128" height="128" title="the target, gecko.png (T shows it full size)"></canvas></div>
     </div>
   </div>
 </div>
@@ -896,11 +888,6 @@ syncUI();
 // the target inset
 { const c = $("tgt"), x = c.getContext("2d"); x.putImageData(TGT.img, 0, 0);
   c.onclick = () => { look.show_target = !look.show_target; syncUI(); }; }
-{ const tl = G.torch_loss || {}, f = k => tl[k] ? `${tl[k][0].toFixed(3)} / ${tl[k][1].toFixed(3)}` : "?";
-  $("about").innerHTML = `Model: <b>${G.source}</b> (preset ${G.preset}, 10 Fourier centres, 6 hidden channels, a brake, pressure above mass ${G.rest}, a paint head of ${HW} units carrying 3 colours + 4 paint-hidden). `
-    + `The loss is the training loss: multiscale MSE over the target's power, mass / colour. In torch it is <b>${f("96")}</b> at step 96 and <b>${f("300")}</b> at step 300; `
-    + `float rounding differs on the GPU and the dynamics are chaotic, so the numbers here drift a little from those. Trained to look right up to step ~500.`
-    + ` <a href="index.html">Overview</a> · <a href="fluoddity-ca-next.html">the simulator</a>`; }
 
 let paused = false, flashMsg = "", flashT = 0;
 function flash(m){ flashMsg = m; flashT = performance.now(); }
@@ -1000,8 +987,6 @@ const b64f = a => { const u = new Uint8Array(a.buffer); let s = ""; for(let i = 
   for(const [key, label] of list){ const o = document.createElement("option"); o.value = key; o.textContent = label; sel.appendChild(o); }
   sel.value = (typeof GECKO_KEY !== "undefined") ? GECKO_KEY : list[0][0];
   sel.onchange = () => { const u = new URL(location.href); u.searchParams.set("model", sel.value); location.href = u.toString(); };
-  if(G.el) $("model-note").textContent = "Each cell also remembers where it settled: from about step " + Math.round(G.el.t0) +
-    " on it keeps a rest position, carried with its mass, and a trained spring pulls it back there. So a push, a poke or a shake heals; a cut does not, the mass is gone.";
 }
 window.__g = {
   get t(){ return step; }, restart, look, cam,
