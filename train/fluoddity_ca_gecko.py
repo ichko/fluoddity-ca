@@ -715,6 +715,9 @@ def main():
     ap.add_argument("--wdmg", type=float, default=0.0, help="selection: score = (undamaged + wdmg * damage_eval) / (1 + wdmg); >0 also runs the damage eval")
     ap.add_argument("--disturb", type=int, default=0, help="pool: at most K grown samples of each batch get a random mass-conserving disturbance (uses --damage_age/gap/protect)")
     ap.add_argument("--disturb_p", type=float, default=0.7, help="chance that an eligible sample is disturbed")
+    ap.add_argument("--dist_u", default="0.2,1.0", help="range of disturbance strength u (1 = the old strongest; up to 2)")
+    ap.add_argument("--mix_p", type=float, default=0.25, help="chance a disturbance is 2-3 milder ones at once")
+    ap.add_argument("--settle", type=int, default=0, help="T>0: after a disturbance, frames are scored with weight (steps since)/T, capped at 1: time to go back")
     ap.add_argument("--nbr", type=int, default=0, help="R>0: brain also reads the (2R+1)^2 box mean of mass and hidden (isotropic)")
     ap.add_argument("--elastic", action="store_true", help="every cell carries a rest position (2 channels) that follows it at a learned rate r; a learned spring k pulls it back")
     ap.add_argument("--el_r0", type=float, default=2.0, help="initial bias of r (logit): 2 = rest position follows at 0.88 per step")
@@ -736,6 +739,8 @@ def main():
     ap.add_argument("--es_lr", type=float, default=0.02, help="ES Adam step, in the same relative units")
     ap.add_argument("--es_seed", type=int, default=1, help="ES also perturbs the seed velocity (and seed hidden)")
     a = ap.parse_args()
+    global DIST_U, MIX_P
+    DIST_U = tuple(float(x) for x in a.dist_u.split(",")); MIX_P = a.mix_p
     torch.set_num_threads(a.threads)
     torch.manual_seed(a.seed)
     tgt = load_target(a)
@@ -1139,7 +1144,7 @@ def disturb_state(model, S, T, kind, gen, u=None):
     """one random disturbance of kind `kind` at strength u in [0,1] (random if None); returns (S, T, text)"""
     n, cells, Hd = model.N, model.N / 2.0, model.Hd
     R = lambda lo, hi: lo + (hi - lo) * float(torch.rand(1, generator=gen))
-    if u is None: u = R(0.2, 1.0)
+    if u is None: u = R(*DIST_U)
     S = S.clone(); m = S[0]
     ang = R(0, 2 * math.pi); cs, sn = math.cos(ang), math.sin(ang)
     if kind == "drag":       # the page's push brush: a soft disc dragged 4-30 cells
@@ -1199,13 +1204,18 @@ def disturb_state(model, S, T, kind, gen, u=None):
     raise ValueError(kind)
 
 
-def random_disturb(model, S, T, gen, kinds=DISTURB_KINDS, mix_p=0.25):
+DIST_U = (0.2, 1.0)
+MIX_P = 0.25
+
+
+def random_disturb(model, S, T, gen, kinds=DISTURB_KINDS, mix_p=None):
     """one disturbance, or with chance mix_p two or three milder ones"""
+    if mix_p is None: mix_p = MIX_P
     if float(torch.rand(1, generator=gen)) < mix_p:
         k = 2 + int(float(torch.rand(1, generator=gen)) < 0.5); txt = []
         for _ in range(k):
             kd = kinds[int(torch.randint(len(kinds), (1,), generator=gen))]
-            S, T, t = disturb_state(model, S, T, kd, gen, u=0.1 + 0.5 * float(torch.rand(1, generator=gen))); txt.append(t)
+            S, T, t = disturb_state(model, S, T, kd, gen, u=(0.1 + 0.5 * float(torch.rand(1, generator=gen))) * DIST_U[1]); txt.append(t)
         return S, T, "+".join(txt)
     kd = kinds[int(torch.randint(len(kinds), (1,), generator=gen))]
     return disturb_state(model, S, T, kd, gen)
@@ -1405,7 +1415,11 @@ def train_pool(model, a, tgt, total, iters, say, name, ck=None):
                 keep = {k for k in range(1, L + 1) if k % a.score_every == 0 or k == L}
             out, S, T = model.run(total, L, keep=keep, full=True, state=st, t0=age)
             parts = [frame_loss(model, St, tgt, trgb, a) for St in out.values()]
-            loss = sum(p[0] for p in parts) / len(parts)
+            if getattr(a, "settle", 0) > 0 and cut_at[i] >= 0:   # time to go back: early frames after a disturbance count less
+                wts = [min(1.0, (age + k - cut_at[i]) / a.settle) for k in out.keys()]
+                loss = sum(w * p[0] for w, p in zip(wts, parts)) / len(parts)
+            else:
+                loss = sum(p[0] for p in parts) / len(parts)
             if not torch.isfinite(loss): ok = False; break
             (loss / len(idx)).backward()
             pool[i] = (S.detach(), T.detach()); ages[i] = age + L
