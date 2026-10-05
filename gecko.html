@@ -504,16 +504,22 @@ vec4 fetch(sampler2D s, vec2 c){
              mix(texelFetch(s, ivec2(i0.x, i1.y), 0), texelFetch(s, i1, 0), r.x), r.y);
 }
 vec3 ramp(float x){ return clamp(vec3(x*1.6, x*1.25 - 0.1, x*1.8 - 0.8), 0.0, 1.0); }
+vec3 hsv(float h, float s, float v){ vec3 p = abs(fract(h + vec3(1.0, 2.0/3.0, 1.0/3.0))*6.0 - 3.0); return v*mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), s); }
 void main(){
   vec2 c = 128.0 + ((vUv*2.0 - 1.0)*uZoom + uCam)*128.0;     // cell coordinates
   if(c.x < 0.0 || c.y < 0.0 || c.x >= 256.0 || c.y >= 256.0){ o = vec4(0.012, 0.02, 0.024, 1); return; }
   vec3 col;
   if(uShowTgt){
     vec4 t = fetch(uTgt, c);                // rgb premultiplied, alpha = target mass
-    col = uMode == 1 ? ramp(t.a/uMMax) : t.rgb/uCMax*uBright;
+    col = uMode == 1 ? ramp(t.a/uMMax) : (uMode == 2 ? vec3(t.a/uMMax*0.5) : t.rgb/uCMax*uBright);
   } else {
-    float m = fetch(uS0, c).x;
+    vec4 s0 = fetch(uS0, c);
+    float m = s0.x;
     if(uMode == 1) col = ramp(m/uMMax);
+    else if(uMode == 2){                     // Fluoddity look: hue = velocity direction, value = mass
+      vec2 vel = m > 1e-9 ? s0.yz/m : vec2(0);
+      col = hsv(atan(vel.y, vel.x)/6.2831853 + 0.5, 0.85, clamp(m/uMMax, 0.0, 1.0))*uBright;
+    }
     else col = (m + fetch(uS2, c).yzw)*0.5/uCMax*uBright;
   }
   if(uBrush.z > 0.0){
@@ -855,7 +861,7 @@ rowSlider(gR, "speed", "steps/second", 0.5, 300, 0.5, look);
 ctl.speed.r.title = "steps per second, the same on any screen: 2 is one step every half second";
 rowSlider(gR, "restart_at", "restart at", 0, 2000, 50, look);
 rowCheck(gR, "loss", "measure the loss every 8 steps", look);
-rowSelect(gV, "mode", "show", ["mass × colour", "mass"], look);
+rowSelect(gV, "mode", "show", ["mass × colour", "mass", "velocity (Fluoddity)"], look);
 rowSlider(gV, "brightness", "brightness", 0.2, 4, 0.01, look);
 rowCheck(gV, "glow", "glow (tonemap + bloom)", look);
 rowCheck(gV, "smooth", "smooth cells", look);
@@ -958,7 +964,7 @@ cv.addEventListener("wheel", e => {
   e.preventDefault(); const r = cv.getBoundingClientRect(), s = Math.min(r.width, r.height);
   const nx = ((e.clientX - r.left) - (r.width - s)/2)/s*2 - 1, ny = 1 - ((e.clientY - r.top) - (r.height - s)/2)/s*2;
   const wx = nx*cam.zoom + cam.x, wy = ny*cam.zoom + cam.y;
-  cam.zoom = Math.min(1.2, Math.max(0.05, cam.zoom*Math.exp(e.deltaY*0.0015)));
+  cam.zoom = Math.min(2.0, Math.max(0.05, cam.zoom*Math.exp(e.deltaY*0.0015)));
   cam.x = wx - nx*cam.zoom; cam.y = wy - ny*cam.zoom;
 }, {passive:false});
 let resizeT = 0;
