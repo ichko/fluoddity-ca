@@ -779,7 +779,7 @@ function measure(){
 
 // ---------------------------------------------------------------- display
 const look = { tool: 0, brush: 12, cut_trail: true, push_k: 0.3, shake: 1.0, kick: 0.4, speed: 30, restart_at: 0, mode: 0, brightness: 1.0, glow: false, smooth: false, show_target: false, loss: true };
-const cam = { x: 0, y: 0, zoom: 0.625 };
+const cam = { x: 0, y: 0, zoom: 1.0 };
 const brush = { x: 0, y: 0, on: false };   // zoom 0.625: the central 160 cells, as in the training pictures
 function present(){
   let pr = P.view; gl.useProgram(pr.p); gl.disable(gl.BLEND);
@@ -959,7 +959,7 @@ cv.addEventListener("pointermove", e => {
 });
 cv.addEventListener("pointerup", () => { drag = null; if(holding){ holding = null; flash(look.tool === 3 ? "poked" : "twirled"); } if(pushing){ pushing = null; flash("pushed"); } if(cutting){ cutting = false; lastCut = null; flash("cut"); } });
 cv.addEventListener("pointerleave", () => { brush.on = false; });
-cv.addEventListener("dblclick", () => { if(look.tool === 1) return; cam.x = 0; cam.y = 0; cam.zoom = 0.625; });
+cv.addEventListener("dblclick", () => { if(look.tool === 1) return; cam.x = 0; cam.y = 0; cam.zoom = 1.0; });
 cv.addEventListener("wheel", e => {
   e.preventDefault(); const r = cv.getBoundingClientRect(), s = Math.min(r.width, r.height);
   const nx = ((e.clientX - r.left) - (r.width - s)/2)/s*2 - 1, ny = 1 - ((e.clientY - r.top) - (r.height - s)/2)/s*2;
