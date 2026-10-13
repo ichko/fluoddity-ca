@@ -75,6 +75,7 @@ body.hidep #toggle{display:block}
       <h2>Preset</h2>
       <select id="preset"></select>
       <label class="sel" style="margin-top:6px"><span>CA family</span><select id="ca-preset"><option value="">—</option></select></label>
+      <label class="sel"><span>gallery</span><select id="gallery-preset"><option value="">—</option></select></label>
       <label class="sel"><span>my presets</span><select id="my-preset"><option value="">—</option></select></label>
       <div class="mine"><input id="my-name" type="text" placeholder="name for Ctrl+S" aria-label="preset name" spellcheck="false"><button id="b-save" type="button" title="Ctrl+S: always a new preset">save new</button><button id="b-over" type="button" title="replace the selected preset with the current settings">overwrite</button><button id="b-del" type="button" title="delete the selected preset">delete</button></div>
       <div class="btns"><button id="b-export" type="button" title="download all your presets as one JSON file">export my presets</button><button id="b-import" type="button" title="add presets from an exported JSON file">import</button><input id="f-import" type="file" accept=".json,application/json" hidden></div>
@@ -96,6 +97,7 @@ body.hidep #toggle{display:block}
 <script>
 /*PRESETS*/
 /*CA_PRESETS*/
+/*GALLERY*/
 </script>
 <script>
 "use strict";
@@ -831,8 +833,12 @@ for(const g of ["Core", "Advanced"]){
 }
 const caSel = $("ca-preset");
 CA_PRESETS.forEach((c, i) => { const o = document.createElement("option"); o.value = i; o.textContent = c.name; caSel.appendChild(o); });
-sel.addEventListener("change", () => { caSel.value = ""; mySel.value = ""; const c = PRESETS[+sel.value]; source = {kind: "fl", name: c.name}; loadPreset(c); });
-caSel.addEventListener("change", () => { if(caSel.value === "") return; sel.selectedIndex = -1; mySel.value = "";
+const galSel = $("gallery-preset");
+GALLERY.forEach((c, i) => { const o = document.createElement("option"); o.value = i; o.textContent = c.name; galSel.appendChild(o); });
+function loadGallery(c){ applyConfig({...c, source: {kind: "gal", name: c.name}}); }
+galSel.addEventListener("change", () => { if(galSel.value === "") return; sel.selectedIndex = -1; caSel.value = ""; mySel.value = ""; loadGallery(GALLERY[+galSel.value]); });
+sel.addEventListener("change", () => { caSel.value = ""; mySel.value = ""; galSel.value = ""; const c = PRESETS[+sel.value]; source = {kind: "fl", name: c.name}; loadPreset(c); });
+caSel.addEventListener("change", () => { if(caSel.value === "") return; sel.selectedIndex = -1; mySel.value = ""; galSel.value = "";
   const c = CA_PRESETS[+caSel.value]; source = {kind: "ca", name: c.name}; loadPreset(c); });
 
 // ---------------------------------------------------------------- my presets (browser storage)
@@ -900,7 +906,7 @@ function renameMine(){
 }
 mySel.addEventListener("change", () => {
   if(mySel.value === ""){ myName.value = ""; return; }
-  const c = saved[+mySel.value]; sel.selectedIndex = -1; caSel.value = "";
+  const c = saved[+mySel.value]; sel.selectedIndex = -1; caSel.value = ""; galSel.value = "";
   myName.value = c.name; applyConfig(c); source = {kind: "my", name: c.name};
 });
 myName.addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); renameMine(); myName.blur(); } });
@@ -989,17 +995,18 @@ new ResizeObserver(() => { clearTimeout(resizeT); resizeT = setTimeout(() => { i
 
 // ---------------------------------------------------------------- go
 buildWorld(look.world_size); buildDisplay();
-const startName = "_Default";
-const startIdx = Math.max(0, PRESETS.findIndex(c => c.name === startName));
+const startName = "storm";
+const startIdx = Math.max(0, GALLERY.findIndex(c => c.name === startName));
 const resume = readStore(KEY_CURRENT, null);
 if(resume && resume.S && resume.rule && resume.rule.length === 80){
   applyConfig(resume);
   sel.selectedIndex = -1;
   if(source.kind === "fl"){ const i = PRESETS.findIndex(c => c.name === source.name); if(i >= 0) sel.value = i; }
   else if(source.kind === "ca"){ const i = CA_PRESETS.findIndex(c => c.name === source.name); if(i >= 0) caSel.value = i; }
+  else if(source.kind === "gal"){ const i = GALLERY.findIndex(c => c.name === source.name); if(i >= 0) galSel.value = i; }
   else if(source.kind === "my"){ const i = saved.findIndex(c => c.name === source.name); if(i >= 0){ fillMine(i); myName.value = source.name; } }
   flash("restored your last settings");
-} else { sel.value = startIdx; loadPreset(PRESETS[startIdx]); }
+} else { sel.selectedIndex = -1; galSel.value = startIdx; loadGallery(GALLERY[startIdx]); }
 let last = performance.now(), fps = 0;
 function loop(t){
   frameTick();
